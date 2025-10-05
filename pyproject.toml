@@ -1,9 +1,15 @@
 [project]
 name = "apple-vision"
 version = "0.1.0"
-description = "Add your description here"
+description = "Apple detection model scaffold (MinneApple)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "ruff>=0.13.3",
+    "torch>=2.2.0",
+    "torchvision>=0.17.0",
+    "pycocotools>=2.0.8",
+    "pillow>=10.0.0",
+    "numpy>=1.26.0",
+    "tqdm>=4.66.0",
 ]

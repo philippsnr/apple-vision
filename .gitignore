@@ -11,3 +11,34 @@ wheels/
 
 # PyCharm
 .idea/
+
+Data
+data/
+
+# Editors/IDE settings
+.vscode/
+
+# Caches & test artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage reports
+.coverage
+coverage.xml
+htmlcov/
+
+# Checkpoints and logs
+checkpoints/
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.*
+
+# Python version manager
+.python-version
