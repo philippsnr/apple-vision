@@ -62,7 +62,17 @@ Hinweise
 - Falls dein Rohdatensatz nicht im erwarteten Format vorliegt, nutze das Skript scripts/prepare_minneapple.py oder konvertiere zu COCO (bbox=[x,y,w,h], category_id=1 für "apple").
 
 Nächste Schritte (Roadmap)
-- Datenvalidierung/Visualisierung (Schnellplot mit Bounding Boxes)
-- Metriken (mAP, COCO Evaluator)
 - Maskenunterstützung (Mask R-CNN)
 - REST API (FastAPI) für Inferenz
+
+Datenvalidierung/Visualisierung – Schnellplot
+- Schneller visueller Check deiner Annotationen (zeichnet Ground‑Truth-Bounding‑Boxes auf Beispielbilder).
+- Beispiel:
+  - uv run python -m apple_vision.quickplot --dataset-root data/minneapple/coco --ann annotations/instances_val.json --images images/val --n 8 --out-dir quickplots
+- Optional: --show öffnet die Bilder nach dem Speichern.
+
+Metriken – mAP (COCO Evaluator)
+- Evaluiert ein gespeichertes Modell gegen das Val‑Set (COCO‑Style) und reportet mAP (AP@[.5:.95]) sowie AP50/AP75 usw.
+- Beispiel:
+  - uv run python -m apple_vision.evaluate_coco --dataset-root data/minneapple/coco --val-ann annotations/instances_val.json --val-images images/val --checkpoint checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth
+- Ergebnis: COCO‑Summary in der Konsole und Speicherung der Detections als JSON (coco_results.json).

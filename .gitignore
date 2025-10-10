@@ -32,6 +32,9 @@ htmlcov/
 checkpoints/
 logs/
 
+# Quickplots
+quickplots/
+
 # OS files
 .DS_Store
 Thumbs.db
