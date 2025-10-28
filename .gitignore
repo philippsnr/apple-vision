@@ -12,8 +12,8 @@ wheels/
 # PyCharm
 .idea/
 
-Data
-data/
+# Data
+/data/
 
 # Editors/IDE settings
 .vscode/
