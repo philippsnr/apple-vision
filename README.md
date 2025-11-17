@@ -32,6 +32,18 @@ Datensatz vorbereiten (MinneApple)
       - instances_val.json
       - [instances_test.json]
 
+Datensatz vorbereiten (Apple Dataset Benchmark from Orchard Environment)
+- Download der Rohdaten (Supervisely-Archiv oder Original-ZIPs) z. B. über Dataset Ninja: https://datasetninja.com/apple-dataset-benchmark-from-orchard-environment
+- Nach dem Entpacken sollte ein Ordner mit Unterordnern ArtificialLight/, CropLoadEstimation/, HarvestingRobot2016/, HarvestingRobot2017/ vorliegen (Standard: data/orchard/raw).
+- Konvertiere nach COCO-Bounding-Box-Format mit:
+  - uv run python scripts/prepare_orchard_benchmark.py --root data/orchard/raw --val-ratio 0.15 --seed 42
+  - Optional: --test-ratio <0.x> für einen dritten Split und --symlink zum Symlinken statt Kopieren.
+- Ergebnisstruktur (COCO):
+  - data/orchard/coco/
+    - images/train, images/val [, images/test]
+    - annotations/instances_train.json, annotations/instances_val.json [, instances_test.json]
+  - Train/Val/Test sind Zufallssplits über alle 2.299 Bilder (Reproduzierbarkeit via --seed).
+
 Schnellstart: Training
 - Beispiel (gerät wird automatisch gewählt – CUDA falls verfügbar):
   - uv run python -m apple_vision.train --dataset-root data/minneapple/coco
