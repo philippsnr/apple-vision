@@ -58,7 +58,19 @@ def _read_annotation_file(path: Path) -> Dict[str, List[List[float]]]:
                 mapping.setdefault(img_name.lower(), [])
                 continue
             if len(coords) % 4 != 0:
-                raise ValueError(f"Invalid annotation line in {path}: expected groups of 4 values, got {len(coords)} ({line})")
+                # Some files contain a trailing, incomplete bbox (e.g. due to a dangling comma).
+                # Be tolerant: drop the last 1-3 values and keep the rest.
+                trimmed = len(coords) - (len(coords) % 4)
+                if trimmed <= 0:
+                    # Nothing usable on this line
+                    print(f"[warn] No complete bbox found in {path} for image '{img_name}' -> skipping line: {line.strip()}")
+                    mapping.setdefault(img_name.lower(), [])
+                    continue
+                print(
+                    f"[warn] Incomplete bbox in {path} for image '{img_name}': expected groups of 4, got {len(coords)}; "
+                    f"dropping last {len(coords) - trimmed} value(s)."
+                )
+                coords = coords[:trimmed]
             boxes: List[List[float]] = []
             for i in range(0, len(coords), 4):
                 try:
@@ -76,7 +88,8 @@ def _read_annotation_file(path: Path) -> Dict[str, List[List[float]]]:
 def _collect_samples(root: Path) -> List[Sample]:
     subsets = [p for p in root.iterdir() if p.is_dir()]
     if not subsets:
-        raise FileNotFoundError(f"No sub-directories found in {root}. Expected folders such as 'ArtificialLight', 'CropLoadEstimation', ...")
+        # Allow datasets where images (and optional annotations.txt) are directly under root
+        subsets = [root]
 
     samples: List[Sample] = []
     for subset_dir in sorted(subsets):
@@ -210,7 +223,7 @@ def _stage_images(samples: Iterable[Sample], dest_dir: Path, symlink: bool):
 
 def main():
     ap = argparse.ArgumentParser(description="Convert Apple Dataset Benchmark from Orchard Environment to COCO format.")
-    ap.add_argument("--root", type=str, default="data/orchard/raw", help="Directory that contains the four scenario folders (ArtificialLight, CropLoadEstimation, ...).")
+    ap.add_argument("--root", type=str, default="data/orchard/raw", help="Dataset root. May contain scenario folders (ArtificialLight, CropLoadEstimation, ...), but all are optional. Images can also be directly under this root.")
     ap.add_argument("--out-root", type=str, default=None, help="Destination root for the COCO dataset (defaults to <root>/../coco).")
     ap.add_argument("--val-ratio", type=float, default=0.15, help="Validation split ratio (0-1).")
     ap.add_argument("--test-ratio", type=float, default=0.0, help="Optional test split ratio (0-1).")
