@@ -44,6 +44,20 @@ Datensatz vorbereiten (Apple Dataset Benchmark from Orchard Environment)
     - annotations/instances_train.json, annotations/instances_val.json [, instances_test.json]
   - Train/Val/Test sind Zufallssplits über alle 2.299 Bilder (Reproduzierbarkeit via --seed).
 
+Datensatz vorbereiten (Apple MOTS)
+- Download: https://datasetninja.com/apple-mots (liefert APPLE_MOTS.zip oder das DatasetNinja-Tar mit Supervisely-Format).
+- Erwarteter Roh-Layout nach dem Entpacken (Standard: data/apple_mots/raw):
+  - train/images/<sequence>/*.png und train/instances/<sequence>/*.png
+  - testing/images/<sequence>/*.png und testing/instances/<sequence>/*.png
+- Konvertiere Masken → Bounding Boxes nach COCO mit:
+  - uv run python scripts/prepare_apple_mots.py --root data/apple_mots/raw --train-splits train --val-splits testing --seed 42 (nutzt das offizielle Testing-Set als Val).
+  - Alternativ: uv run python scripts/prepare_apple_mots.py --root data/apple_mots/raw --train-splits train --val-splits \"\" --val-ratio 0.1 --test-splits testing (random Val aus train, Testing als dediziertes Test-JSON).
+- Ergebnisstruktur (COCO):
+  - data/apple_mots/coco/
+    - images/train, images/val [, images/test]
+    - annotations/instances_train.json, annotations/instances_val.json [, instances_test.json]
+- Das Skript übernimmt die gegebenen Szenenverzeichnisse, erstellt eindeutige Dateinamen und generiert Bounding Boxes aus den Instance-Masken (Kategorie "apple").
+
 Schnellstart: Training
 - Beispiel (gerät wird automatisch gewählt – CUDA falls verfügbar):
   - uv run python -m apple_vision.train --dataset-root data/minneapple/coco
