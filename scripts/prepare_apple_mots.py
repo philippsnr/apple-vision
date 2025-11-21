@@ -1,247 +1,290 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Apple MOTS -> COCO (bounding boxes).
+Apple MOTS (Supervisely) -> COCO (Bounding Boxes) + optional Val-Split aus train/.
+Erzeugt Struktur:
+data/apple_mots/coco/
+  images/{train,val}
+  annotations/{instances_train.json, instances_val.json[, instances_test.json]}
 
-Expected layout after extracting APPLE_MOTS.zip (or the DatasetNinja tarball):
-root/
-  train/
-    images/<scene>/*.png
-    instances/<scene>/*.png
-  testing/
-    images/<scene>/*.png
-    instances/<scene>/*.png
+Erwartete Struktur unter --root (Standard: data/apple_mots/raw):
 
-Each split contains per-scene folders; masks have the same relative path as the
-images. This script converts the pixel-level instance masks into COCO-style
-bounding boxes so they can be used with the existing detection pipeline.
+  root/
+    train/
+      img/   # RGB-Bilder
+      ann/   # Supervisely-Annotationen (*.json)
+    val/     # optional, sonst wird aus train/ gesplittet
+      img/
+      ann/
+    test/    # optional
+      img/
+      ann/
 """
-
-from __future__ import annotations
 
 import argparse
 import json
 import random
 import shutil
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence
 
-import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-IMG_EXTENSIONS = {".jpg", ".jpeg", ".png"}
+
+def bbox_from_polygon(points):
+    """
+    Supervisely-Polygon: points = [[x1, y1], [x2, y2], ...]
+    -> COCO-BBox [x, y, w, h]
+    """
+    if not points:
+        return None
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    x1, x2 = min(xs), max(xs)
+    y1, y2 = min(ys), max(ys)
+    w = max(1, int(round(x2 - x1)))
+    h = max(1, int(round(y2 - y1)))
+    return [int(round(x1)), int(round(y1)), w, h]
 
 
-@dataclass
-class Sample:
-    img_path: Path
-    mask_path: Path | None
-    rel_name: str
-    split: str
+def bbox_from_bitmap(bitmap):
+    """
+    Supervisely-Bitmap:
+      {
+        "origin": [x, y],
+        "size": {"width": w, "height": h},
+        ...
+      }
+    -> COCO-BBox [x, y, w, h]
+    """
+    if not bitmap:
+        return None
+    origin = bitmap.get("origin")
+    size = bitmap.get("size")
+    if not origin or not size:
+        return None
+    x, y = origin
+    w = max(1, int(size.get("width", 0)))
+    h = max(1, int(size.get("height", 0)))
+    return [int(round(x)), int(round(y)), w, h]
 
 
-def _parse_split_arg(raw: str | None) -> List[str]:
-    if not raw:
-        return []
-    return [part.strip() for part in raw.split(",") if part.strip()]
+def collect_pairs_supervisely(split_dir: Path):
+    """
+    Sucht Bilder + passende Supervisely-Annotationen in:
+      split_dir/img  und  split_dir/ann
 
+    Erwartet:
+      - Bildname:   frame_0001.png
+      - Ann-Datei:  frame_0001.png.json  ODER  frame_0001.json
+    """
+    img_dir = split_dir / "img"
+    ann_dir = split_dir / "ann"
 
-def _collect_split_samples(root: Path, split_name: str) -> List[Sample]:
-    split_dir = root / split_name
-    images_dir = split_dir / "images"
-    instances_dir = split_dir / "instances"
-    if not images_dir.exists():
-        raise FileNotFoundError(f"Images directory not found for split '{split_name}' -> {images_dir}")
+    if not img_dir.exists():
+        raise FileNotFoundError(f"img/ nicht gefunden unter: {img_dir}")
+    if not ann_dir.exists():
+        raise FileNotFoundError(f"ann/ nicht gefunden unter: {ann_dir}")
 
-    has_masks = instances_dir.exists()
-    if not has_masks:
-        print(f"[warn] No masks found for split '{split_name}' at {instances_dir}. Images will be treated as unlabeled.")
+    images = sorted(
+        p
+        for p in img_dir.iterdir()
+        if p.suffix.lower() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+    )
 
-    samples: List[Sample] = []
-    for img_path in sorted(images_dir.rglob("*")):
-        if not img_path.is_file():
+    pairs = []
+    for ip in images:
+        # Supervisely nimmt typischerweise den vollen Dateinamen + ".json"
+        cand1 = ann_dir / f"{ip.name}.json"
+        # Manche Exporte nehmen nur den Stem
+        cand2 = ann_dir / f"{ip.stem}.json"
+
+        if cand1.exists():
+            ap = cand1
+        elif cand2.exists():
+            ap = cand2
+        else:
+            # Kein Annotation-File -> überspringen
             continue
-        if img_path.suffix.lower() not in IMG_EXTENSIONS:
-            continue
-        rel = img_path.relative_to(images_dir)
-        rel_flat = rel.as_posix().replace("/", "_")
-        rel_name = f"{split_name}_{rel_flat}"
-        mask_path = instances_dir / rel if has_masks else None
-        if mask_path and not mask_path.exists():
-            print(f"[warn] Missing mask for {img_path}, expected {mask_path}")
-            mask_path = None
-        samples.append(Sample(img_path=img_path, mask_path=mask_path, rel_name=rel_name, split=split_name))
-    if not samples:
-        raise RuntimeError(f"No images found under {images_dir}")
-    return samples
+
+        pairs.append((ip, ap))
+
+    return pairs
 
 
-def _boxes_from_mask(mask_path: Path | None):
-    if not mask_path:
-        return []
-    mask = np.array(Image.open(mask_path))
-    if mask.ndim == 3:
-        # If RGB (e.g., ignore overlays), use first channel
-        mask = mask[:, :, 0]
-    unique_vals = np.unique(mask)
-    boxes = []
-    for inst_id in unique_vals:
-        if inst_id == 0:
-            continue
-        ys, xs = np.where(mask == inst_id)
-        if ys.size == 0 or xs.size == 0:
-            continue
-        x1, x2 = xs.min(), xs.max()
-        y1, y2 = ys.min(), ys.max()
-        w = int(max(1, x2 - x1))
-        h = int(max(1, y2 - y1))
-        if w == 0 or h == 0:
-            continue
-        boxes.append([int(x1), int(y1), w, h])
-    return boxes
-
-
-def _build_coco(samples: Sequence[Sample], start_img_id=0, start_ann_id=1):
+def build_coco_from_supervisely(pairs, start_img_id=0, start_ann_id=1):
+    """
+    Baut ein COCO-Objekt aus (image_path, annotation_json_path)-Pairs.
+    Es werden nur Objekte mit classTitle "apple" / "Apple" berücksichtigt.
+    BBox-Berechnung:
+      - bevorzugt Polygon (points.exterior)
+      - fallback: bitmap.origin + bitmap.size
+    """
     coco = {
         "images": [],
         "annotations": [],
         "categories": [{"id": 1, "name": "apple"}],
     }
+
     img_id = start_img_id
     ann_id = start_ann_id
-    for sample in tqdm(samples, desc="build coco"):
-        with Image.open(sample.img_path) as img:
-            width, height = img.size
+
+    for img_path, ann_path in tqdm(pairs, desc="COCO build (Supervisely)"):
+        # Bildgröße bestimmen (zur Sicherheit aus dem Bild selbst)
+        with Image.open(img_path) as im:
+            w, h = im.size
+
         coco["images"].append(
-            {"id": img_id, "file_name": sample.rel_name, "width": int(width), "height": int(height)}
+            {"id": img_id, "file_name": img_path.name, "width": int(w), "height": int(h)}
         )
 
-        boxes = _boxes_from_mask(sample.mask_path)
-        for bbox in boxes:
+        with open(ann_path, "r") as f:
+            ann_data = json.load(f)
+
+        objects = ann_data.get("objects", [])
+        for obj in objects:
+            class_title = obj.get("classTitle", "")
+            if class_title.lower() != "apple":
+                # Andere Klassen / "ignore regions" etc. überspringen
+                continue
+
+            bbox = None
+
+            # 1) Polygon?
+            points = (
+                obj.get("points", {})
+                .get("exterior", [])
+            )
+            if points:
+                bbox = bbox_from_polygon(points)
+
+            # 2) Fallback: Bitmap?
+            if bbox is None:
+                bitmap = obj.get("bitmap")
+                if bitmap:
+                    bbox = bbox_from_bitmap(bitmap)
+
+            if bbox is None:
+                # Konnte keine BBox bestimmen -> überspringen
+                continue
+
             coco["annotations"].append(
                 {
                     "id": ann_id,
                     "image_id": img_id,
                     "category_id": 1,
                     "bbox": bbox,
-                    "area": float(bbox[2] * bbox[3]),
+                    "area": int(bbox[2] * bbox[3]),
                     "iscrowd": 0,
                 }
             )
             ann_id += 1
+
         img_id += 1
+
     return coco
 
 
-def _stage_images(samples: Iterable[Sample], dest_dir: Path, symlink: bool):
+def stage_images(pairs, dest_dir: Path, symlink: bool):
+    """
+    Stellt Bilder in der Zielstruktur bereit (kopieren oder symlinken).
+    """
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for sample in tqdm(samples, desc=f"stage -> {dest_dir.name}"):
-        dst = dest_dir / sample.rel_name
+    for img_path, _ in tqdm(pairs, desc=f"stage -> {dest_dir.name}"):
+        dst = dest_dir / img_path.name
         if dst.exists():
             continue
         if symlink:
             try:
-                dst.symlink_to(sample.img_path.resolve())
-                continue
-            except OSError:
-                print(f"[warn] Symlink failed for {sample.img_path}, fallback to copy.")
-        shutil.copy2(sample.img_path, dst)
-
-
-def _split_for_validation(samples: List[Sample], val_ratio: float, seed: int):
-    if not samples:
-        return samples, []
-    if not (0 < val_ratio < 1):
-        raise ValueError("val-ratio must be between 0 and 1 when no validation split is provided.")
-    rng = random.Random(seed)
-    indices = list(range(len(samples)))
-    rng.shuffle(indices)
-    n_val = max(1, int(len(samples) * val_ratio))
-    val_idx = set(indices[:n_val])
-    val_split = [samples[i] for i in val_idx]
-    train_split = [samples[i] for i in indices[n_val:]]
-    if not train_split:
-        raise RuntimeError("Validation ratio removed all training samples; decrease --val-ratio.")
-    return train_split, val_split
-
-
-def _gather_samples(root: Path, split_names: List[str]) -> List[Sample]:
-    collected: List[Sample] = []
-    for split in split_names:
-        collected.extend(_collect_split_samples(root, split))
-    return collected
+                dst.symlink_to(img_path.resolve())
+            except Exception:
+                shutil.copy2(img_path, dst)
+        else:
+            shutil.copy2(img_path, dst)
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Convert Apple MOTS dataset to COCO bounding boxes.")
-    ap.add_argument("--root", type=str, default="data/apple_mots/raw", help="Directory that contains 'train/', 'testing/' etc.")
-    ap.add_argument("--out-root", type=str, default=None, help="Where to place the COCO dataset (defaults to <root>/../coco).")
-    ap.add_argument("--train-splits", type=str, default="train", help="Comma-separated folder names used for training.")
-    ap.add_argument("--val-splits", type=str, default="testing", help="Comma-separated folder names used for validation. Leave empty to sample from train via --val-ratio.")
-    ap.add_argument("--test-splits", type=str, default="", help="Comma-separated folder names used for test export.")
-    ap.add_argument("--val-ratio", type=float, default=0.0, help="Hold-out ratio from training splits if --val-splits is empty.")
-    ap.add_argument("--seed", type=int, default=42, help="Random seed for train/val split when --val-splits is empty.")
-    ap.add_argument("--symlink", action="store_true", help="Symlink images instead of copying.")
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--root",
+        type=str,
+        default="data/apple_mots/raw",
+        help="Pfad zum Apple MOTS Supervisely-Root (enthält train/, optional val/, test/).",
+    )
+    ap.add_argument(
+        "--val-ratio",
+        type=float,
+        default=0.15,
+        help="Anteil für Val aus train/, wenn kein val/ vorhanden ist.",
+    )
+    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--symlink", action="store_true", help="Bilder lieber symlinken statt kopieren")
     args = ap.parse_args()
 
-    root = Path(args.root).expanduser().resolve()
-    if not root.exists():
-        raise FileNotFoundError(f"Dataset root not found: {root}")
+    root = Path(args.root).resolve()
+    train_dir = root / "train"
+    val_dir = root / "val"  # evtl. nicht vorhanden
+    test_dir = root / "test"
 
-    train_names = _parse_split_arg(args.train_splits) or ["train"]
-    val_names = _parse_split_arg(args.val_splits)
-    test_names = _parse_split_arg(args.test_splits)
+    out_root = root.parent / "coco"
+    out_img_train = out_root / "images" / "train"
+    out_img_val = out_root / "images" / "val"
+    out_ann = out_root / "annotations"
+    out_ann.mkdir(parents=True, exist_ok=True)
 
-    train_samples = _gather_samples(root, train_names)
-    val_samples = _gather_samples(root, val_names) if val_names else []
-    if not val_samples:
-        if args.val_ratio <= 0:
-            raise RuntimeError(
-                "No validation split discovered. Provide --val-splits or a positive --val-ratio to split part of the train data."
-            )
-        train_samples, extra_val = _split_for_validation(train_samples, args.val_ratio, args.seed)
-        val_samples = extra_val
+    # --- Train/Val bestimmen ---
+    if val_dir.exists():
+        train_pairs = collect_pairs_supervisely(train_dir)
+        val_pairs = collect_pairs_supervisely(val_dir)
+    else:
+        # Val aus Train splitten
+        all_pairs = collect_pairs_supervisely(train_dir)
+        random.Random(args.seed).shuffle(all_pairs)
+        n_val = max(1, int(len(all_pairs) * args.val_ratio))
+        val_pairs = all_pairs[:n_val]
+        train_pairs = all_pairs[n_val:]
+        print(f"Kein 'val/' gefunden → Split aus 'train/': train={len(train_pairs)} val={len(val_pairs)}")
 
-    test_samples = _gather_samples(root, test_names) if test_names else []
+    # --- COCO JSONs bauen ---
+    coco_train = build_coco_from_supervisely(train_pairs, start_img_id=0, start_ann_id=1)
+    coco_val = build_coco_from_supervisely(val_pairs, start_img_id=100000, start_ann_id=1)
 
-    print(f"Collected samples: train={len(train_samples)} val={len(val_samples)} test={len(test_samples)}")
+    # --- Bilder in Zielstruktur bereitstellen ---
+    stage_images(train_pairs, out_img_train, symlink=args.symlink)
+    stage_images(val_pairs, out_img_val, symlink=args.symlink)
 
-    out_root = Path(args.out_root).expanduser().resolve() if args.out_root else root.parent / "coco"
-    img_root = out_root / "images"
-    ann_root = out_root / "annotations"
-    ann_root.mkdir(parents=True, exist_ok=True)
-
-    coco_train = _build_coco(train_samples, start_img_id=0, start_ann_id=1)
-    coco_val = _build_coco(val_samples, start_img_id=100000, start_ann_id=1)
-
-    _stage_images(train_samples, img_root / "train", args.symlink)
-    _stage_images(val_samples, img_root / "val", args.symlink)
-
-    with open(ann_root / "instances_train.json", "w", encoding="utf-8") as f:
+    # --- JSON speichern ---
+    with open(out_ann / "instances_train.json", "w") as f:
         json.dump(coco_train, f)
-    with open(ann_root / "instances_val.json", "w", encoding="utf-8") as f:
+    with open(out_ann / "instances_val.json", "w") as f:
         json.dump(coco_val, f)
 
-    if test_samples:
-        coco_test = _build_coco(test_samples, start_img_id=200000, start_ann_id=1)
-        _stage_images(test_samples, img_root / "test", args.symlink)
-        with open(ann_root / "instances_test.json", "w", encoding="utf-8") as f:
+    # --- Optional: Test konvertieren (nur JSON, ohne Kopieren) ---
+    if test_dir.exists():
+        test_pairs = collect_pairs_supervisely(test_dir)
+        coco_test = build_coco_from_supervisely(test_pairs, start_img_id=200000, start_ann_id=1)
+        with open(out_ann / "instances_test.json", "w") as f:
             json.dump(coco_test, f)
 
     print("\nFertig ✅")
-    print(f"COCO root: {out_root}")
-    print(f"- {img_root / 'train'}")
-    print(f"- {img_root / 'val'}")
-    if test_samples:
-        print(f"- {img_root / 'test'}")
-    print(f"- {ann_root / 'instances_train.json'}")
-    print(f"- {ann_root / 'instances_val.json'}")
-    if test_samples:
-        print(f"- {ann_root / 'instances_test.json'}")
+    print(f"COCO-Root: {out_root}")
+    print(f"- {out_img_train}")
+    print(f"- {out_img_val}")
+    print(f"- {out_ann / 'instances_train.json'}")
+    print(f"- {out_ann / 'instances_val.json'}")
+    if (out_ann / "instances_test.json").exists():
+        print(f"- {out_ann / 'instances_test.json'}")
 
 
 if __name__ == "__main__":
     main()
 
+"""
+Example usage:
+
+    uv run python scripts/prepare_apple_mots_supervisely.py \
+      --root data/apple_mots/raw \
+      --val-ratio 0.15 \
+      --seed 42
+
+"""
