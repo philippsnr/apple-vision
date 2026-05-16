@@ -90,6 +90,22 @@ Output: `data/apple_mots/coco/`
 
 ---
 
+### Merging Datasets
+
+Combine multiple COCO-format datasets into one. Image and annotation IDs are remapped to be globally unique; images are symlinked (or copied) into the output directory, prefixed with the source dataset name to avoid filename collisions.
+
+```bash
+uv run python scripts/merge_coco_datasets.py \
+  data/minneapple/coco data/orchard/coco \
+  --output data/merged/coco
+```
+
+Options: `--splits train val test` to control which splits are merged (default: all three), `--copy` to copy images instead of symlinking.
+
+Output: `data/merged/coco/`
+
+---
+
 ### Dataset Cleaning
 
 If a dataset contains corrupted images, run the cleaning script to move them out and remove their entries from the annotation JSON:
@@ -177,5 +193,6 @@ scripts/
   prepare_minneapple.py          # MinneApple → COCO
   prepare_orchard_benchmark.py   # Orchard → COCO
   prepare_apple_mots.py          # Apple MOTS masks → COCO
+  merge_coco_datasets.py         # merge multiple COCO datasets into one
   clean_coco_dataset.py          # remove corrupted images & fix annotations
 ```
