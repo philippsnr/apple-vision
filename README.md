@@ -1,104 +1,181 @@
-Apple Vision – MinneApple Starter
+# Apple Vision
 
-Überblick
-- Ziel: Einfache Trainings-Pipeline zur Erkennung von Äpfeln in Bildern.
-- Datensatz: MinneApple (Detection). Dieses Repo nutzt Faster R-CNN (torchvision) auf COCO‑ähnlichen Annotationen (nur Bounding Boxes).
+Apple detection training pipeline using Faster R-CNN (torchvision) on COCO-style annotations. Supports three datasets: MinneApple, Apple Dataset Benchmark from Orchard Environment, and Apple MOTS.
 
-Voraussetzungen
+## Requirements
+
 - Python >= 3.10
-- Abhängigkeiten (siehe pyproject.toml): torch, torchvision, pycocotools, pillow, numpy, tqdm, ruff
-- Optional: CUDA-fähige GPU (Training auf CPU ist möglich, aber deutlich langsamer).
+- PyTorch >= 2.2, torchvision >= 0.17, pycocotools, pillow, numpy, tqdm
+- Optional: CUDA-capable GPU (CPU training works but is much slower)
 
-Installation
-- Mit uv (empfohlen):
-  - uv sync
-  - Ausführen ohne manuelles Aktivieren der Umgebung: uv run python -m apple_vision.train --help
-- Mit pip (Alternative):
-  - python -m venv .venv
-  - .venv\Scripts\activate  (Windows) oder source .venv/bin/activate (Linux/macOS)
-  - pip install -e .
+## Installation
 
-Datensatz vorbereiten (MinneApple)
-- Ausgangsdaten (Beispiel): data/minneapple/detection mit Unterordnern train/, test/ und jeweils images/ und masks/.
-- Konvertiere nach COCO-Bounding-Box-Format mit:
-  - uv run python scripts/prepare_minneapple.py --root data/minneapple/detection --val-ratio 0.15 --seed 42
-- Ergebnisstruktur (COCO):
-  - data/minneapple/coco/
-    - images/
-      - train/
-      - val/
-    - annotations/
-      - instances_train.json
-      - instances_val.json
-      - [instances_test.json]
+**With uv (recommended):**
+```bash
+uv sync
+```
 
-Datensatz vorbereiten (Apple Dataset Benchmark from Orchard Environment)
-- Download der Rohdaten (Supervisely-Archiv oder Original-ZIPs) z. B. über Dataset Ninja: https://datasetninja.com/apple-dataset-benchmark-from-orchard-environment
-- Nach dem Entpacken sollte ein Ordner mit Unterordnern ArtificialLight/, CropLoadEstimation/, HarvestingRobot2016/, HarvestingRobot2017/ vorliegen (Standard: data/orchard/raw).
-- Konvertiere nach COCO-Bounding-Box-Format mit:
-  - uv run python scripts/prepare_orchard_benchmark.py --root data/orchard/raw --val-ratio 0.15 --seed 42
-  - Optional: --test-ratio <0.x> für einen dritten Split und --symlink zum Symlinken statt Kopieren.
-- Ergebnisstruktur (COCO):
-  - data/orchard/coco/
-    - images/train, images/val [, images/test]
-    - annotations/instances_train.json, annotations/instances_val.json [, instances_test.json]
-  - Train/Val/Test sind Zufallssplits über alle 2.299 Bilder (Reproduzierbarkeit via --seed).
+**With pip:**
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+pip install -e .
+```
 
-Datensatz vorbereiten (Apple MOTS)
-- Download: https://datasetninja.com/apple-mots (liefert APPLE_MOTS.zip oder das DatasetNinja-Tar mit Supervisely-Format).
-- Erwarteter Roh-Layout nach dem Entpacken (Standard: data/apple_mots/raw):
-  - train/images/<sequence>/*.png und train/instances/<sequence>/*.png
-  - testing/images/<sequence>/*.png und testing/instances/<sequence>/*.png
-- Konvertiere Masken → Bounding Boxes nach COCO mit:
-  - uv run python scripts/prepare_apple_mots.py --root data/apple_mots/raw --train-splits train --val-splits testing --seed 42 (nutzt das offizielle Testing-Set als Val).
-  - Alternativ: uv run python scripts/prepare_apple_mots.py --root data/apple_mots/raw --train-splits train --val-splits \"\" --val-ratio 0.1 --test-splits testing (random Val aus train, Testing als dediziertes Test-JSON).
-- Ergebnisstruktur (COCO):
-  - data/apple_mots/coco/
-    - images/train, images/val [, images/test]
-    - annotations/instances_train.json, annotations/instances_val.json [, instances_test.json]
-- Das Skript übernimmt die gegebenen Szenenverzeichnisse, erstellt eindeutige Dateinamen und generiert Bounding Boxes aus den Instance-Masken (Kategorie "apple").
+## Datasets
 
-Schnellstart: Training
-- Beispiel (gerät wird automatisch gewählt – CUDA falls verfügbar):
-  - uv run python -m apple_vision.train --dataset-root data/minneapple/coco
-- Alternativ ohne uv:
-  - python -m apple_vision.train --dataset-root data/minneapple/coco
-- Auch möglich (delegiert an das Training-CLI):
-  - python main.py --dataset-root data/minneapple/coco
+### MinneApple
 
-Wichtige Optionen (mit Defaults)
-- --train-ann (annotations/instances_train.json)
-- --train-images (images/train)
-- --val-ann (annotations/instances_val.json)
-- --val-images (images/val)
-- --epochs (1)
-- --batch-size (2)
-- --lr (0.005)
-- --num-workers (2)
-- --out-dir (checkpoints)
-- --resume <pfad-zu-checkpoint.pth> (optional)
-- --early-stop-patience <N> (0 = deaktiviert)
+Raw data layout after download:
+```
+data/minneapple/detection/
+  train/images/   train/masks/
+  test/images/    test/masks/
+```
 
-Ausgaben/Checkpoints
-- Bestes Modell (nach Val-Loss): checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth
-- Finales Modell (am Trainingsende): checkpoints/fasterrcnn_resnet50_fpn_apple.pth
+Convert to COCO format:
+```bash
+uv run python scripts/prepare_minneapple.py --root data/minneapple/detection --val-ratio 0.15 --seed 42
+```
 
-Hinweise
-- Dieses Starterprojekt verwendet ausschließlich Bounding Boxes; eine spätere Erweiterung auf Mask R-CNN ist möglich.
-- Falls dein Rohdatensatz nicht im erwarteten Format vorliegt, nutze das Skript scripts/prepare_minneapple.py oder konvertiere zu COCO (bbox=[x,y,w,h], category_id=1 für "apple").
+Output: `data/minneapple/coco/`
 
-Nächste Schritte (Roadmap)
-- Maskenunterstützung (Mask R-CNN)
-- REST API (FastAPI) für Inferenz
+---
 
-Datenvalidierung/Visualisierung – Schnellplot
-- Schneller visueller Check deiner Annotationen (zeichnet Ground‑Truth-Bounding‑Boxes auf Beispielbilder).
-- Beispiel:
-  - uv run python -m apple_vision.quickplot --dataset-root data/minneapple/coco --ann annotations/instances_val.json --images images/val --n 8 --out-dir quickplots
-- Optional: --show öffnet die Bilder nach dem Speichern.
+### Apple Dataset Benchmark from Orchard Environment
 
-Metriken – mAP (COCO Evaluator)
-- Evaluiert ein gespeichertes Modell gegen das Val‑Set (COCO‑Style) und reportet mAP (AP@[.5:.95]) sowie AP50/AP75 usw.
-- Beispiel:
-  - uv run python -m apple_vision.evaluate_coco --dataset-root data/minneapple/coco --val-ann annotations/instances_val.json --val-images images/val --checkpoint checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth
-- Ergebnis: COCO‑Summary in der Konsole und Speicherung der Detections als JSON (coco_results.json).
+Download from [Dataset Ninja](https://datasetninja.com/apple-dataset-benchmark-from-orchard-environment). After extracting, the raw folder should contain subfolders `ArtificialLight/`, `CropLoadEstimation/`, `HarvestingRobot2016/`, `HarvestingRobot2017/`.
+
+Convert to COCO format:
+```bash
+uv run python scripts/prepare_orchard_benchmark.py --root data/orchard/raw --val-ratio 0.15 --seed 42
+```
+
+Options: `--test-ratio <float>` to create a test split, `--symlink` to symlink instead of copying images.
+
+Output: `data/orchard/coco/`
+
+---
+
+### Apple MOTS
+
+Download from [Dataset Ninja](https://datasetninja.com/apple-mots). After extracting, the raw folder should contain:
+```
+data/apple_mots/raw/
+  train/images/<sequence>/*.png
+  train/instances/<sequence>/*.png
+  testing/images/<sequence>/*.png
+  testing/instances/<sequence>/*.png
+```
+
+Convert instance masks to COCO bounding boxes:
+```bash
+# Use official testing set as validation
+uv run python scripts/prepare_apple_mots.py \
+  --root data/apple_mots/raw \
+  --train-splits train \
+  --val-splits testing \
+  --seed 42
+
+# Or: random val split from train, testing as a dedicated test set
+uv run python scripts/prepare_apple_mots.py \
+  --root data/apple_mots/raw \
+  --train-splits train \
+  --val-splits "" \
+  --val-ratio 0.1 \
+  --test-splits testing
+```
+
+Output: `data/apple_mots/coco/`
+
+---
+
+### Dataset Cleaning
+
+If a dataset contains corrupted images, run the cleaning script to move them out and remove their entries from the annotation JSON:
+```bash
+uv run python scripts/clean_coco_dataset.py data/orchard/coco
+```
+
+The script scans `images/train`, `images/val`, and `images/test`, moves corrupted files to a `broken/` subfolder, and updates the corresponding annotation JSONs in-place (a `.bak` backup is created first).
+
+## Training
+
+```bash
+uv run python -m apple_vision.train --dataset-root data/minneapple/coco
+```
+
+Key options (defaults shown):
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dataset-root` | *(required)* | Path to COCO-format dataset root |
+| `--train-ann` | `annotations/instances_train.json` | Training annotation file |
+| `--train-images` | `images/train` | Training images directory |
+| `--val-ann` | `annotations/instances_val.json` | Validation annotation file |
+| `--val-images` | `images/val` | Validation images directory |
+| `--epochs` | `1` | Number of training epochs |
+| `--batch-size` | `2` | Batch size |
+| `--lr` | `0.005` | SGD learning rate |
+| `--num-workers` | `2` | DataLoader workers |
+| `--out-dir` | `checkpoints` | Directory for saved checkpoints |
+| `--resume` | — | Path to a checkpoint to resume from |
+| `--early-stop-patience` | `0` | Early stopping patience (0 = disabled) |
+
+### Checkpoints
+
+- `checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth` — best val-loss checkpoint
+- `checkpoints/fasterrcnn_resnet50_fpn_apple.pth` — final checkpoint after all epochs
+
+## Evaluation (COCO mAP)
+
+Evaluate a saved checkpoint against the validation set and report AP@[.5:.95], AP50, AP75, etc.:
+
+```bash
+uv run python -m apple_vision.evaluate_coco \
+  --dataset-root data/minneapple/coco \
+  --checkpoint checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth
+```
+
+Key options:
+
+| Flag | Default | Description |
+|---|---|---|
+| `--val-ann` | `annotations/instances_val.json` | Validation annotation file |
+| `--val-images` | `images/val` | Validation images directory |
+| `--results-json` | `coco_results.json` | Where to save raw detections |
+| `--score-threshold` | `0.0` | Minimum score to keep a detection |
+| `--device` | auto | `cuda` or `cpu` |
+
+## Visualization
+
+Quickly verify annotations by drawing ground-truth bounding boxes on a sample of images:
+
+```bash
+uv run python -m apple_vision.quickplot \
+  --dataset-root data/minneapple/coco \
+  --ann annotations/instances_val.json \
+  --images images/val \
+  --n 8 \
+  --out-dir quickplots
+```
+
+Add `--show` to open the images after saving.
+
+## Project Structure
+
+```
+apple_vision/
+  train.py          # training loop
+  evaluate_coco.py  # COCO mAP evaluation
+  quickplot.py      # annotation visualizer
+  models/
+    detector.py     # Faster R-CNN factory
+  data/
+    minneapple.py   # COCO dataset class
+scripts/
+  prepare_minneapple.py          # MinneApple → COCO
+  prepare_orchard_benchmark.py   # Orchard → COCO
+  prepare_apple_mots.py          # Apple MOTS masks → COCO
+  clean_coco_dataset.py          # remove corrupted images & fix annotations
+```
