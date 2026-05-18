@@ -209,22 +209,37 @@ def main():
         "--root",
         type=str,
         default="data/apple_mots/raw",
-        help="Pfad zum Apple MOTS Supervisely-Root (enthält train/, optional val/, test/).",
+        help="Path to Apple MOTS Supervisely root (contains subdirectories for each split).",
+    )
+    ap.add_argument(
+        "--train-splits",
+        type=str,
+        default="train",
+        help="Name of the subdirectory to use as the training split.",
+    )
+    ap.add_argument(
+        "--val-splits",
+        type=str,
+        default="",
+        help='Name of the subdirectory to use as the validation split. Pass "" to derive val from train using --val-ratio.',
+    )
+    ap.add_argument(
+        "--test-splits",
+        type=str,
+        default="",
+        help="Name of the subdirectory to use as the test split (optional).",
     )
     ap.add_argument(
         "--val-ratio",
         type=float,
         default=0.15,
-        help="Anteil für Val aus train/, wenn kein val/ vorhanden ist.",
+        help="Fraction of train to use as val when --val-splits is empty.",
     )
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--symlink", action="store_true", help="Bilder lieber symlinken statt kopieren")
+    ap.add_argument("--symlink", action="store_true", help="Symlink images instead of copying")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
-    train_dir = root / "train"
-    val_dir = root / "val"  # evtl. nicht vorhanden
-    test_dir = root / "test"
 
     out_root = root.parent / "coco"
     out_img_train = out_root / "images" / "train"
@@ -233,17 +248,17 @@ def main():
     out_ann.mkdir(parents=True, exist_ok=True)
 
     # --- Train/Val bestimmen ---
-    if val_dir.exists():
+    train_dir = root / args.train_splits
+    if args.val_splits:
         train_pairs = collect_pairs_supervisely(train_dir)
-        val_pairs = collect_pairs_supervisely(val_dir)
+        val_pairs = collect_pairs_supervisely(root / args.val_splits)
     else:
-        # Val aus Train splitten
         all_pairs = collect_pairs_supervisely(train_dir)
         random.Random(args.seed).shuffle(all_pairs)
         n_val = max(1, int(len(all_pairs) * args.val_ratio))
         val_pairs = all_pairs[:n_val]
         train_pairs = all_pairs[n_val:]
-        print(f"Kein 'val/' gefunden → Split aus 'train/': train={len(train_pairs)} val={len(val_pairs)}")
+        print(f"No val split given → splitting from train: train={len(train_pairs)} val={len(val_pairs)}")
 
     # --- COCO JSONs bauen ---
     coco_train = build_coco_from_supervisely(train_pairs, start_img_id=0, start_ann_id=1)
@@ -259,20 +274,22 @@ def main():
     with open(out_ann / "instances_val.json", "w") as f:
         json.dump(coco_val, f)
 
-    # --- Optional: Test konvertieren (nur JSON, ohne Kopieren) ---
-    if test_dir.exists():
-        test_pairs = collect_pairs_supervisely(test_dir)
+    # --- Optional: Test ---
+    if args.test_splits:
+        test_pairs = collect_pairs_supervisely(root / args.test_splits)
         coco_test = build_coco_from_supervisely(test_pairs, start_img_id=200000, start_ann_id=1)
+        out_img_test = out_root / "images" / "test"
+        stage_images(test_pairs, out_img_test, symlink=args.symlink)
         with open(out_ann / "instances_test.json", "w") as f:
             json.dump(coco_test, f)
 
-    print("\nFertig ✅")
-    print(f"COCO-Root: {out_root}")
+    print("\nDone")
+    print(f"COCO root: {out_root}")
     print(f"- {out_img_train}")
     print(f"- {out_img_val}")
     print(f"- {out_ann / 'instances_train.json'}")
     print(f"- {out_ann / 'instances_val.json'}")
-    if (out_ann / "instances_test.json").exists():
+    if args.test_splits:
         print(f"- {out_ann / 'instances_test.json'}")
 
 
@@ -282,9 +299,10 @@ if __name__ == "__main__":
 """
 Example usage:
 
-    uv run python scripts/prepare_apple_mots_supervisely.py \
+    uv run python scripts/prepare_apple_mots.py \
       --root data/apple_mots/raw \
-      --val-ratio 0.15 \
+      --train-splits train \
+      --val-splits testing \
       --seed 42
 
 """
