@@ -2,6 +2,12 @@
 
 Apple detection training pipeline using Faster R-CNN (torchvision) on COCO-style annotations. Supports three datasets: MinneApple, Apple Dataset Benchmark from Orchard Environment, and Apple MOTS.
 
+## Paper
+
+**AI-Based Detection of Apples for Autonomous Harvesting Systems**  
+Philipp Staudinger, Nils Fleschhut — DHBW Ravensburg, 2026  
+[paper/studienarbeit.pdf](paper/studienarbeit.pdf)
+
 ## Requirements
 
 - Python >= 3.10
