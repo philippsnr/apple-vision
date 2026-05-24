@@ -5,8 +5,9 @@ Apple detection training pipeline using Faster R-CNN (torchvision) on COCO-style
 ## Paper
 
 **AI-Based Detection of Apples for Autonomous Harvesting Systems**  
-Philipp Staudinger, Nils Fleschhut — DHBW Ravensburg, 2026  
-[paper/studienarbeit.pdf](paper/studienarbeit.pdf)
+Philipp Staudinger, Nils Fleschhut — DHBW Ravensburg, 2026
+
+[![Paper cover](paper/cover.png)](paper/studienarbeit.pdf)
 
 ## Requirements
 
