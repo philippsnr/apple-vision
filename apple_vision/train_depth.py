@@ -10,6 +10,7 @@ from tqdm import tqdm
 
 from .data.rgbd import RGBDDataset, collate_fn
 from .models.depth_estimator import DepthEstimator, si_log_loss
+from .plot_metrics import plot_loss_curve, save_metrics_csv
 
 
 def parse_args() -> argparse.Namespace:
@@ -26,10 +27,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--early-stop-patience", type=int, default=0)
     p.add_argument("--resize", type=int, nargs=2, metavar=("W", "H"), default=None,
                    help="Resize images before training, e.g. --resize 640 400")
+    p.add_argument("--max-depth", type=float, default=10.0,
+                   help="Ignore pixels beyond this depth (metres) in the loss. 0 = disabled.")
     return p.parse_args()
 
 
-def train_one_epoch(model, optimizer, loader, device, epoch, num_epochs):
+def train_one_epoch(model, optimizer, loader, device, epoch, num_epochs, max_depth):
     model.train()
     total_loss = 0.0
     bar = tqdm(loader, desc=f"Epoch {epoch}/{num_epochs} [train]", leave=False, unit="batch")
@@ -38,7 +41,7 @@ def train_one_epoch(model, optimizer, loader, device, epoch, num_epochs):
         depth = depth.to(device)
 
         pred = model(rgb)
-        loss = si_log_loss(pred, depth)
+        loss = si_log_loss(pred, depth, max_depth=max_depth)
 
         optimizer.zero_grad()
         loss.backward()
@@ -52,7 +55,7 @@ def train_one_epoch(model, optimizer, loader, device, epoch, num_epochs):
 
 
 @torch.no_grad()
-def evaluate(model, loader, device, epoch, num_epochs):
+def evaluate(model, loader, device, epoch, num_epochs, max_depth):
     model.eval()
     total_loss = 0.0
     bar = tqdm(loader, desc=f"Epoch {epoch}/{num_epochs} [val]  ", leave=False, unit="batch")
@@ -60,7 +63,7 @@ def evaluate(model, loader, device, epoch, num_epochs):
         rgb = rgb.to(device)
         depth = depth.to(device)
         pred = model(rgb)
-        loss = si_log_loss(pred, depth)
+        loss = si_log_loss(pred, depth, max_depth=max_depth)
         total_loss += loss.item()
         bar.set_postfix(loss=f"{loss.item():.4f}")
     avg = total_loss / max(1, len(loader))
@@ -101,14 +104,17 @@ def main_cli():
 
     best_val = float("inf")
     bad_epochs = 0
+    history = []
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs)
-        val_loss = evaluate(model, val_loader, device, epoch, args.epochs)
+        max_depth = args.max_depth if args.max_depth > 0 else None
+        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs, max_depth)
+        val_loss = evaluate(model, val_loader, device, epoch, args.epochs, max_depth)
         scheduler.step()
 
         marker = " *" if val_loss < best_val else ""
         print(f"Epoch {epoch:>3}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}{marker}")
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
         if val_loss < best_val:
             best_val = val_loss
@@ -123,6 +129,10 @@ def main_cli():
 
     torch.save(model.state_dict(), final_ckpt)
     print(f"Saved final checkpoint to {final_ckpt}")
+
+    csv_path = out_dir / "depth_estimator_metrics.csv"
+    save_metrics_csv(csv_path, history)
+    plot_loss_curve(csv_path, out_dir / "depth_estimator_loss.png", title="Depth Estimator — Training Loss")
 
 
 if __name__ == "__main__":

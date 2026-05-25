@@ -11,6 +11,7 @@ from tqdm import tqdm
 
 from .data.minneapple import CocoAppleDataset, collate_fn
 from .models.detector import create_model
+from .plot_metrics import plot_loss_curve, save_metrics_csv
 
 
 def parse_args() -> argparse.Namespace:
@@ -138,6 +139,7 @@ def main_cli():
 
     best_val = float("inf")
     bad_epochs = 0
+    history = []
 
     for epoch in range(1, args.epochs + 1):
         train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs)
@@ -145,6 +147,7 @@ def main_cli():
 
         marker = " *" if val_loss < best_val else ""
         print(f"Epoch {epoch:>3}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}{marker}")
+        history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
         if val_loss < best_val:
             best_val = val_loss
@@ -160,6 +163,10 @@ def main_cli():
     final_ckpt_path = out_dir / "fasterrcnn_resnet50_fpn_apple.pth"
     torch.save(model.state_dict(), final_ckpt_path)
     print(f"Saved final checkpoint to {final_ckpt_path}")
+
+    csv_path = out_dir / "detector_metrics.csv"
+    save_metrics_csv(csv_path, history)
+    plot_loss_curve(csv_path, out_dir / "detector_loss.png", title="Apple Detector — Training Loss")
 
 
 if __name__ == "__main__":
