@@ -78,14 +78,22 @@ class DepthEstimator(nn.Module):
         return self.head(d)
 
 
-def si_log_loss(pred: torch.Tensor, target: torch.Tensor, lam: float = 0.5) -> torch.Tensor:
+def si_log_loss(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    lam: float = 0.5,
+    max_depth: float | None = 10.0,
+) -> torch.Tensor:
     """Scale-invariant logarithmic loss (Eigen et al., 2014).
 
     lam=0.5 is the original formulation; lam=0 reduces to plain MSE in log space.
-    Only pixels where target > 0 contribute (masks holes / sensor drop-outs).
+    max_depth: pixels beyond this distance are excluded from the loss — background
+    sky does not matter for apple depth estimation and would otherwise dominate.
     """
     eps = 1e-6
     mask = target > eps
+    if max_depth is not None:
+        mask = mask & (target <= max_depth)
     if mask.sum() == 0:
         return pred.sum() * 0.0
 
