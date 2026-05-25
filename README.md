@@ -1,6 +1,11 @@
 # Apple Vision
 
-Apple detection training pipeline using Faster R-CNN (torchvision) on COCO-style annotations. Supports three datasets: MinneApple, Apple Dataset Benchmark from Orchard Environment, and Apple MOTS.
+Apple detection and 3D localisation pipeline. Trains two independent models from separate datasets:
+
+- **Apple detector** — Faster R-CNN (torchvision) fine-tuned on COCO-style annotations (MinneApple, Orchard Benchmark, Apple MOTS)
+- **Depth estimator** — ResNet50 + U-Net decoder trained on paired RGB+depth images to predict metric depth from a single RGB image
+
+At inference both models run on the same RGB image. Detected bounding boxes are back-projected into 3D using the predicted depth map and camera intrinsics, producing `(X, Y, Z, radius)` in metres for each apple.
 
 ## Paper
 
@@ -124,11 +129,11 @@ The script scans `images/train`, `images/val`, and `images/test`, moves corrupte
 
 ## Training
 
+### Apple Detector
+
 ```bash
 uv run python -m apple_vision.train --dataset-root data/minneapple/coco
 ```
-
-Key options (defaults shown):
 
 | Flag | Default | Description |
 |---|---|---|
@@ -145,10 +150,47 @@ Key options (defaults shown):
 | `--resume` | — | Path to a checkpoint to resume from |
 | `--early-stop-patience` | `0` | Early stopping patience (0 = disabled) |
 
-### Checkpoints
-
+Checkpoints saved to:
 - `checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth` — best val-loss checkpoint
-- `checkpoints/fasterrcnn_resnet50_fpn_apple.pth` — final checkpoint after all epochs
+- `checkpoints/fasterrcnn_resnet50_fpn_apple.pth` — final checkpoint
+
+---
+
+### Depth Estimator
+
+Trains on paired RGB + depth images (uint16 PNG, millimetres). Expected dataset layout:
+
+```
+data/rgb_depth_o3de/
+  rgb/    rgb_<timestamp>.png
+  depth/  depth_<timestamp>.png
+  camera/ camera_<timestamp>.json
+```
+
+The camera JSON follows the ROS `camera_info` format and must contain a `K` field (3×3 intrinsics as a flat 9-element list).
+
+```bash
+uv run python -m apple_vision.train_depth --dataset-root data/rgb_depth_o3de
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dataset-root` | *(required)* | Path to the RGB+depth dataset root |
+| `--val-fraction` | `0.1` | Fraction of data held out for validation |
+| `--epochs` | `20` | Number of training epochs |
+| `--batch-size` | `2` | Batch size |
+| `--lr` | `1e-4` | AdamW learning rate |
+| `--num-workers` | `2` | DataLoader workers |
+| `--out-dir` | `checkpoints` | Directory for saved checkpoints |
+| `--resume` | — | Path to a checkpoint to resume from |
+| `--no-pretrained` | — | Train backbone from scratch (not recommended) |
+| `--early-stop-patience` | `0` | Early stopping patience (0 = disabled) |
+
+The model uses a scale-invariant log loss (Eigen et al., 2014) which handles the wide depth range (< 1 m to > 60 m) robustly.
+
+Checkpoints saved to:
+- `checkpoints/depth_estimator_best.pth` — best val-loss checkpoint
+- `checkpoints/depth_estimator.pth` — final checkpoint
 
 ## Evaluation (COCO mAP)
 
@@ -189,13 +231,16 @@ Add `--show` to open the images after saving.
 
 ```
 apple_vision/
-  train.py          # training loop
-  evaluate_coco.py  # COCO mAP evaluation
-  quickplot.py      # annotation visualizer
+  train.py            # detector training loop
+  train_depth.py      # depth estimator training loop
+  evaluate_coco.py    # COCO mAP evaluation
+  quickplot.py        # annotation visualizer
   models/
-    detector.py     # Faster R-CNN factory
+    detector.py         # Faster R-CNN factory
+    depth_estimator.py  # ResNet50 + U-Net decoder, SI-log loss
   data/
-    minneapple.py   # COCO dataset class
+    minneapple.py       # COCO dataset class
+    rgbd.py             # paired RGB+depth dataset class
 scripts/
   prepare_minneapple.py          # MinneApple → COCO
   prepare_orchard_benchmark.py   # Orchard → COCO
