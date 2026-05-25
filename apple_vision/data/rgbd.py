@@ -35,14 +35,19 @@ class RGBDDataset(Dataset):
         split: str = "train",
         val_fraction: float = 0.1,
         seed: int = 42,
+        resize: tuple[int, int] | None = None,
     ) -> None:
         root = Path(root)
+        depth_dir = root / "depth"
+        camera_dir = root / "camera"
         all_rgb = sorted(
             p for p in (root / "rgb").iterdir()
             if p.suffix == ".png" and "Zone" not in p.name
+            and (depth_dir / f"depth_{p.stem[len('rgb_'):]}.png").exists()
+            and (camera_dir / f"camera_{p.stem[len('rgb_'):]}.json").exists()
         )
         if not all_rgb:
-            raise FileNotFoundError(f"No RGB images found in {root / 'rgb'}")
+            raise FileNotFoundError(f"No complete RGB+depth+camera triplets found in {root}")
 
         rng = random.Random(seed)
         indices = list(range(len(all_rgb)))
@@ -52,8 +57,9 @@ class RGBDDataset(Dataset):
         selected = sorted(indices[:n_val] if split == "val" else indices[n_val:])
 
         self.rgb_paths = [all_rgb[i] for i in selected]
-        self.depth_dir = root / "depth"
-        self.camera_dir = root / "camera"
+        self.depth_dir = depth_dir
+        self.camera_dir = camera_dir
+        self.resize = resize  # (width, height) in pixels
 
         self._normalize = T.Normalize(mean=_IMAGENET_MEAN, std=_IMAGENET_STD)
 
@@ -67,10 +73,17 @@ class RGBDDataset(Dataset):
         depth_path = self.depth_dir / f"depth_{timestamp}.png"
         camera_path = self.camera_dir / f"camera_{timestamp}.json"
 
-        rgb = self._normalize(T.ToTensor()(Image.open(rgb_path).convert("RGB")))
+        rgb_img = Image.open(rgb_path).convert("RGB")
+        depth_img = Image.open(depth_path)
+
+        if self.resize is not None:
+            rgb_img = rgb_img.resize(self.resize, Image.BILINEAR)
+            depth_img = depth_img.resize(self.resize, Image.NEAREST)
+
+        rgb = self._normalize(T.ToTensor()(rgb_img))
 
         # uint16 millimetres → float32 metres
-        depth_mm = np.array(Image.open(depth_path), dtype=np.float32)
+        depth_mm = np.array(depth_img, dtype=np.float32)
         depth = torch.from_numpy(depth_mm / 1000.0).unsqueeze(0)
 
         with open(camera_path) as f:

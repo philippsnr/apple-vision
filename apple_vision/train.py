@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import time
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms as T
+from tqdm import tqdm
 
 from .data.minneapple import CocoAppleDataset, collate_fn
 from .models.detector import create_model
@@ -30,11 +30,11 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def train_one_epoch(model, optimizer, data_loader, device, epoch):
+def train_one_epoch(model, optimizer, data_loader, device, epoch, num_epochs):
     model.train()
     total_loss = 0.0
-    start = time.time()
-    for images, targets in data_loader:
+    bar = tqdm(data_loader, desc=f"Epoch {epoch}/{num_epochs} [train]", leave=False, unit="batch")
+    for images, targets in bar:
         images = [T.ToTensor()(img).to(device) if not isinstance(img, torch.Tensor) else img.to(device) for img in images]
         targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
 
@@ -46,13 +46,12 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch):
         optimizer.step()
 
         total_loss += losses.item()
-    duration = time.time() - start
-    avg_loss = total_loss / max(1, len(data_loader))
-    print(f"Epoch {epoch}: avg loss={avg_loss:.4f} ({duration:.1f}s)")
-    return avg_loss
+        bar.set_postfix(loss=f"{losses.item():.4f}")
+
+    return total_loss / max(1, len(data_loader))
 
 
-def evaluate(model, data_loader, device):
+def evaluate(model, data_loader, device, epoch, num_epochs):
     """Compute average validation loss without updating model parameters.
 
     Note: torchvision detection models return losses only when model.training is True.
@@ -61,25 +60,24 @@ def evaluate(model, data_loader, device):
     """
     was_training = model.training
     model.train()
-    # Freeze BatchNorm running stats during validation loss computation
     for m in model.modules():
         if isinstance(m, nn.modules.batchnorm._BatchNorm):
             m.eval()
 
     total_loss = 0.0
+    bar = tqdm(data_loader, desc=f"Epoch {epoch}/{num_epochs} [val]  ", leave=False, unit="batch")
     with torch.no_grad():
-        for images, targets in data_loader:
+        for images, targets in bar:
             images = [T.ToTensor()(img).to(device) if not isinstance(img, torch.Tensor) else img.to(device) for img in images]
             targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
             loss_dict = model(images, targets)
             losses = sum(loss for loss in loss_dict.values())
             total_loss += losses.item()
-    avg_val_loss = total_loss / max(1, len(data_loader))
-    print(f"Validation: avg loss={avg_val_loss:.4f}")
+            bar.set_postfix(loss=f"{losses.item():.4f}")
 
     if not was_training:
         model.eval()
-    return avg_val_loss
+    return total_loss / max(1, len(data_loader))
 
 
 def main_cli():
@@ -142,27 +140,26 @@ def main_cli():
     bad_epochs = 0
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch)
-        val_loss = evaluate(model, val_loader, device)
+        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs)
+        val_loss = evaluate(model, val_loader, device, epoch, args.epochs)
 
-        # Save best checkpoint based on validation loss
+        marker = " *" if val_loss < best_val else ""
+        print(f"Epoch {epoch:>3}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}{marker}")
+
         if val_loss < best_val:
             best_val = val_loss
             torch.save(model.state_dict(), best_ckpt_path)
-            print(f"Saved best checkpoint to {best_ckpt_path} (val_loss={best_val:.4f})")
             bad_epochs = 0
         else:
             bad_epochs += 1
 
-        # Early stopping if enabled
         if args.early_stop_patience > 0 and bad_epochs >= args.early_stop_patience:
             print(f"Early stopping triggered after {epoch} epochs (no improvement for {bad_epochs} epochs).")
             break
 
-    # Always save the final checkpoint at the end of training
     final_ckpt_path = out_dir / "fasterrcnn_resnet50_fpn_apple.pth"
     torch.save(model.state_dict(), final_ckpt_path)
-    print(f"Saved checkpoint to {final_ckpt_path}")
+    print(f"Saved final checkpoint to {final_ckpt_path}")
 
 
 if __name__ == "__main__":

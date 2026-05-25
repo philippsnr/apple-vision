@@ -6,6 +6,7 @@ from pathlib import Path
 
 import torch
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from .data.rgbd import RGBDDataset, collate_fn
 from .models.depth_estimator import DepthEstimator, si_log_loss
@@ -23,14 +24,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--resume", type=str, default=None)
     p.add_argument("--no-pretrained", action="store_true", help="Train backbone from scratch")
     p.add_argument("--early-stop-patience", type=int, default=0)
+    p.add_argument("--resize", type=int, nargs=2, metavar=("W", "H"), default=None,
+                   help="Resize images before training, e.g. --resize 640 400")
     return p.parse_args()
 
 
-def train_one_epoch(model, optimizer, loader, device, epoch):
+def train_one_epoch(model, optimizer, loader, device, epoch, num_epochs):
     model.train()
     total_loss = 0.0
-    start = time.time()
-    for rgb, depth, _ in loader:
+    bar = tqdm(loader, desc=f"Epoch {epoch}/{num_epochs} [train]", leave=False, unit="batch")
+    for rgb, depth, _ in bar:
         rgb = rgb.to(device)
         depth = depth.to(device)
 
@@ -42,23 +45,25 @@ def train_one_epoch(model, optimizer, loader, device, epoch):
         optimizer.step()
 
         total_loss += loss.item()
+        bar.set_postfix(loss=f"{loss.item():.4f}")
 
     avg = total_loss / max(1, len(loader))
-    print(f"Epoch {epoch}: train loss={avg:.4f} ({time.time() - start:.1f}s)")
     return avg
 
 
 @torch.no_grad()
-def evaluate(model, loader, device):
+def evaluate(model, loader, device, epoch, num_epochs):
     model.eval()
     total_loss = 0.0
-    for rgb, depth, _ in loader:
+    bar = tqdm(loader, desc=f"Epoch {epoch}/{num_epochs} [val]  ", leave=False, unit="batch")
+    for rgb, depth, _ in bar:
         rgb = rgb.to(device)
         depth = depth.to(device)
         pred = model(rgb)
-        total_loss += si_log_loss(pred, depth).item()
+        loss = si_log_loss(pred, depth)
+        total_loss += loss.item()
+        bar.set_postfix(loss=f"{loss.item():.4f}")
     avg = total_loss / max(1, len(loader))
-    print(f"           val   loss={avg:.4f}")
     return avg
 
 
@@ -68,9 +73,11 @@ def main_cli():
     print(f"Using device: {device}")
 
     root = Path(args.dataset_root)
-    train_ds = RGBDDataset(root, split="train", val_fraction=args.val_fraction)
-    val_ds = RGBDDataset(root, split="val", val_fraction=args.val_fraction)
-    print(f"Dataset: {len(train_ds)} train / {len(val_ds)} val samples")
+    resize = tuple(args.resize) if args.resize else None
+    train_ds = RGBDDataset(root, split="train", val_fraction=args.val_fraction, resize=resize)
+    val_ds = RGBDDataset(root, split="val", val_fraction=args.val_fraction, resize=resize)
+    print(f"Dataset: {len(train_ds)} train / {len(val_ds)} val samples" +
+          (f"  (resized to {resize[0]}×{resize[1]})" if resize else ""))
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
                               num_workers=args.num_workers, collate_fn=collate_fn)
@@ -96,14 +103,16 @@ def main_cli():
     bad_epochs = 0
 
     for epoch in range(1, args.epochs + 1):
-        train_one_epoch(model, optimizer, train_loader, device, epoch)
-        val_loss = evaluate(model, val_loader, device)
+        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs)
+        val_loss = evaluate(model, val_loader, device, epoch, args.epochs)
         scheduler.step()
+
+        marker = " *" if val_loss < best_val else ""
+        print(f"Epoch {epoch:>3}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}{marker}")
 
         if val_loss < best_val:
             best_val = val_loss
             torch.save(model.state_dict(), best_ckpt)
-            print(f"           → saved best checkpoint (val_loss={best_val:.4f})")
             bad_epochs = 0
         else:
             bad_epochs += 1

@@ -19,7 +19,8 @@ class _DecoderBlock(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, skip: torch.Tensor | None = None) -> torch.Tensor:
-        x = F.interpolate(x, scale_factor=2, mode="bilinear", align_corners=False)
+        target_size = skip.shape[-2:] if skip is not None else (x.shape[-2] * 2, x.shape[-1] * 2)
+        x = F.interpolate(x, size=target_size, mode="bilinear", align_corners=False)
         if skip is not None:
             x = torch.cat([x, skip], dim=1)
         return self.conv(x)
