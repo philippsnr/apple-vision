@@ -150,9 +150,11 @@ uv run python -m apple_vision.train --dataset-root data/minneapple/coco
 | `--resume` | — | Path to a checkpoint to resume from |
 | `--early-stop-patience` | `0` | Early stopping patience (0 = disabled) |
 
-Checkpoints saved to:
-- `checkpoints/fasterrcnn_resnet50_fpn_apple_best.pth` — best val-loss checkpoint
-- `checkpoints/fasterrcnn_resnet50_fpn_apple.pth` — final checkpoint
+Checkpoints and training artifacts saved to `checkpoints/` (or `--out-dir`):
+- `fasterrcnn_resnet50_fpn_apple_best.pth` — best val-loss checkpoint
+- `fasterrcnn_resnet50_fpn_apple.pth` — final checkpoint
+- `detector_metrics.csv` — per-epoch train/val loss
+- `detector_loss.png` — loss curve plot
 
 ---
 
@@ -190,11 +192,17 @@ uv run python -m apple_vision.train_depth --dataset-root data/rgb_depth_o3de
 
 The model uses a scale-invariant log loss (Eigen et al., 2014) which handles the wide depth range (< 1 m to > 60 m) robustly.
 
-Checkpoints saved to:
-- `checkpoints/depth_estimator_best.pth` — best val-loss checkpoint
-- `checkpoints/depth_estimator.pth` — final checkpoint
+Multi-GPU training is automatic: if multiple CUDA GPUs are available, the model is wrapped in `DataParallel`. The learning rate follows a cosine annealing schedule.
 
-## Evaluation (COCO mAP)
+Checkpoints and training artifacts saved to `checkpoints/` (or `--out-dir`):
+- `depth_estimator_best.pth` — best val-loss checkpoint
+- `depth_estimator.pth` — final checkpoint
+- `depth_estimator_metrics.csv` — per-epoch train/val loss
+- `depth_estimator_loss.png` — loss curve plot
+
+## Evaluation
+
+### Apple Detector — COCO mAP
 
 Evaluate a saved checkpoint against the validation set and report AP@[.5:.95], AP50, AP75, etc.:
 
@@ -214,7 +222,29 @@ Key options:
 | `--score-threshold` | `0.0` | Minimum score to keep a detection |
 | `--device` | auto | `cuda` or `cpu` |
 
+---
+
+### Depth Estimator — pixel-level accuracy
+
+Reports MAE, median AE, RMSE, and mean relative error (all in cm) over the validation or training split:
+
+```bash
+uv run python -m apple_vision.evaluate_depth \
+  --checkpoint checkpoints/depth_estimator_best.pth \
+  --dataset-root data/rgb_depth_o3de
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--checkpoint` | *(required)* | Path to depth estimator checkpoint |
+| `--dataset-root` | *(required)* | Path to the RGB+depth dataset root |
+| `--split` | `val` | `train` or `val` |
+| `--resize W H` | — | Resize images before inference |
+| `--max-depth` | `10.0` | Only evaluate pixels up to this depth (metres) |
+
 ## Visualization
+
+### Annotation quickplot
 
 Quickly verify annotations by drawing ground-truth bounding boxes on a sample of images:
 
@@ -229,20 +259,48 @@ uv run python -m apple_vision.quickplot \
 
 Add `--show` to open the images after saving.
 
+---
+
+### Depth comparison
+
+Side-by-side RGB / ground-truth depth / predicted depth panels saved as PNGs:
+
+```bash
+uv run python -m apple_vision.visualize_depth \
+  --checkpoint checkpoints/depth_estimator_best.pth \
+  --dataset-root data/rgb_depth_o3de \
+  --n 8 \
+  --out-dir quickplots/depth
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--checkpoint` | *(required)* | Path to depth estimator checkpoint |
+| `--dataset-root` | *(required)* | Path to the RGB+depth dataset root |
+| `--out-dir` | `quickplots/depth` | Where to save the panels |
+| `--n` | `4` | Number of samples to visualize |
+| `--split` | `val` | `train` or `val` |
+| `--resize W H` | — | Resize images before inference |
+| `--colormap` | `plasma` | Matplotlib colormap name |
+| `--max-depth` | `10.0` | Pixels beyond this depth are shown in grey |
+
 ## Project Structure
 
 ```
 apple_vision/
-  train.py            # detector training loop
-  train_depth.py      # depth estimator training loop
-  evaluate_coco.py    # COCO mAP evaluation
-  quickplot.py        # annotation visualizer
+  train.py              # detector training loop
+  train_depth.py        # depth estimator training loop
+  evaluate_coco.py      # COCO mAP evaluation for the detector
+  evaluate_depth.py     # pixel-level accuracy metrics for the depth estimator
+  quickplot.py          # annotation visualizer (ground-truth bounding boxes)
+  visualize_depth.py    # side-by-side depth comparison plots
+  plot_metrics.py       # shared CSV + loss-curve utilities (used by training scripts)
   models/
-    detector.py         # Faster R-CNN factory
-    depth_estimator.py  # ResNet50 + U-Net decoder, SI-log loss
+    detector.py           # Faster R-CNN factory
+    depth_estimator.py    # ResNet50 + U-Net decoder, SI-log loss
   data/
-    minneapple.py       # COCO dataset class
-    rgbd.py             # paired RGB+depth dataset class
+    minneapple.py         # COCO dataset class
+    rgbd.py               # paired RGB+depth dataset class
 scripts/
   prepare_minneapple.py          # MinneApple → COCO
   prepare_orchard_benchmark.py   # Orchard → COCO
