@@ -94,6 +94,11 @@ def main_cli():
         model.load_state_dict(ckpt)
         print(f"Resumed from {args.resume}")
 
+    n_gpus = torch.cuda.device_count()
+    if n_gpus > 1:
+        model = torch.nn.DataParallel(model)
+        print(f"Using {n_gpus} GPUs via DataParallel")
+
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
@@ -116,9 +121,10 @@ def main_cli():
         print(f"Epoch {epoch:>3}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}{marker}")
         history.append({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
 
+        state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
         if val_loss < best_val:
             best_val = val_loss
-            torch.save(model.state_dict(), best_ckpt)
+            torch.save(state, best_ckpt)
             bad_epochs = 0
         else:
             bad_epochs += 1
@@ -127,7 +133,7 @@ def main_cli():
             print(f"Early stopping after {epoch} epochs.")
             break
 
-    torch.save(model.state_dict(), final_ckpt)
+    torch.save(state, final_ckpt)
     print(f"Saved final checkpoint to {final_ckpt}")
 
     csv_path = out_dir / "depth_estimator_metrics.csv"
