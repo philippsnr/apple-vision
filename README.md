@@ -185,6 +185,8 @@ uv run python -m apple_vision.train_depth --dataset-root data/rgb_depth_o3de
 | `--resume` | — | Path to a checkpoint to resume from |
 | `--no-pretrained` | — | Train backbone from scratch (not recommended) |
 | `--early-stop-patience` | `0` | Early stopping patience (0 = disabled) |
+| `--resize W H` | — | Resize images to W×H before training (e.g. `--resize 640 400`) |
+| `--max-depth` | `10.0` | Ignore pixels beyond this depth in metres in the loss (0 = disabled) |
 
 The model uses a scale-invariant log loss (Eigen et al., 2014) which handles the wide depth range (< 1 m to > 60 m) robustly.
 
