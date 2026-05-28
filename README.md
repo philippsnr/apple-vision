@@ -284,6 +284,17 @@ uv run python -m apple_vision.visualize_depth \
 | `--colormap` | `plasma` | Matplotlib colormap name |
 | `--max-depth` | `10.0` | Pixels beyond this depth are shown in grey |
 
+## Kaggle Notebooks
+
+Ready-to-run notebooks for cloud GPU training are stored in `notebooks/`. Upload the repo as a Kaggle dataset or clone it inside the notebook — both notebooks handle setup automatically.
+
+| Notebook | Description |
+|---|---|
+| [`notebooks/depth-estimation-training.ipynb`](notebooks/depth-estimation-training.ipynb) | Train the ResNet50 + U-Net depth estimator |
+| [`notebooks/apple-detection-training.ipynb`](notebooks/apple-detection-training.ipynb) | Fine-tune Faster R-CNN on a COCO apple dataset |
+
+Each notebook: clones the repo, installs dependencies via `uv sync`, checks the input dataset, runs training, evaluates, and saves visualizations to `/kaggle/working/`. Update the `DATASET_ROOT` variable in the dataset-check cell to match your Kaggle input path.
+
 ## Project Structure
 
 ```
@@ -307,4 +318,7 @@ scripts/
   prepare_apple_mots.py          # Apple MOTS masks → COCO
   merge_coco_datasets.py         # merge multiple COCO datasets into one
   clean_coco_dataset.py          # remove corrupted images & fix annotations
+notebooks/
+  depth-estimation-training.ipynb  # Kaggle: depth estimator training
+  apple-detection-training.ipynb   # Kaggle: apple detector training
 ```
