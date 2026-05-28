@@ -20,4 +20,7 @@ dependencies = [
     "numpy>=1.26.0",
     "tqdm>=4.66.0",
     "matplotlib>=3.8.0",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
 ]
