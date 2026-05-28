@@ -49,24 +49,30 @@ def bbox_from_polygon(points):
 
 def bbox_from_bitmap(bitmap):
     """
-    Supervisely-Bitmap:
-      {
-        "origin": [x, y],
-        "size": {"width": w, "height": h},
-        ...
-      }
-    -> COCO-BBox [x, y, w, h]
+    Supervisely-Bitmap -> COCO-BBox [x, y, w, h].
+    Dimensions come from the inline PNG when no explicit "size" key is present.
     """
     if not bitmap:
         return None
     origin = bitmap.get("origin")
-    size = bitmap.get("size")
-    if not origin or not size:
+    if not origin:
         return None
     x, y = origin
-    w = max(1, int(size.get("width", 0)))
-    h = max(1, int(size.get("height", 0)))
-    return [int(round(x)), int(round(y)), w, h]
+
+    size = bitmap.get("size")
+    if size:
+        w = max(1, int(size.get("width", 0)))
+        h = max(1, int(size.get("height", 0)))
+    else:
+        data = bitmap.get("data")
+        if not data:
+            return None
+        import base64, zlib, io
+        from PIL import Image
+        img = Image.open(io.BytesIO(zlib.decompress(base64.b64decode(data))))
+        w, h = img.size
+
+    return [int(round(x)), int(round(y)), max(1, w), max(1, h)]
 
 
 def collect_pairs_supervisely(split_dir: Path):
