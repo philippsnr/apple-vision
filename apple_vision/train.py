@@ -111,6 +111,11 @@ def main_cli():
     model = create_model(num_classes=num_classes, pretrained=True)
     model.to(device)
 
+    n_gpus = torch.cuda.device_count()
+    if n_gpus > 1:
+        model = torch.nn.DataParallel(model)
+        print(f"Using {n_gpus} GPUs via DataParallel")
+
     # Optionally resume from checkpoint (model weights only)
     if args.resume:
         resume_arg = str(args.resume)
@@ -151,7 +156,8 @@ def main_cli():
 
         if val_loss < best_val:
             best_val = val_loss
-            torch.save(model.state_dict(), best_ckpt_path)
+            state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+            torch.save(state, best_ckpt_path)
             bad_epochs = 0
         else:
             bad_epochs += 1
@@ -161,7 +167,8 @@ def main_cli():
             break
 
     final_ckpt_path = out_dir / "fasterrcnn_resnet50_fpn_apple.pth"
-    torch.save(model.state_dict(), final_ckpt_path)
+    state = model.module.state_dict() if isinstance(model, torch.nn.DataParallel) else model.state_dict()
+    torch.save(state, final_ckpt_path)
     print(f"Saved final checkpoint to {final_ckpt_path}")
 
     csv_path = out_dir / "detector_metrics.csv"
