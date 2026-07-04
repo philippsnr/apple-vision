@@ -10,6 +10,7 @@ from torchvision import transforms as T
 from tqdm import tqdm
 
 from .data.minneapple import CocoAppleDataset, collate_fn
+from .data.transforms import AugConfig, build_transforms
 from .models.detector import create_model
 from .plot_metrics import plot_loss_curve, save_metrics_csv
 
@@ -28,6 +29,16 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--out-dir", type=str, default="checkpoints")
     p.add_argument("--resume", type=str, default=None, help="Path to a model checkpoint (.pth) to resume from")
     p.add_argument("--early-stop-patience", type=int, default=0, help="Early stopping patience in epochs (0 disables)")
+    # --- Augmentation (train split only; keeps val/benchmark un-augmented) ---
+    p.add_argument("--no-aug", action="store_true", help="Disable training augmentation entirely")
+    p.add_argument("--aug-brightness", type=float, default=0.3)
+    p.add_argument("--aug-contrast", type=float, default=0.3)
+    p.add_argument("--aug-saturation", type=float, default=0.2)
+    p.add_argument("--aug-hue", type=float, default=0.05)
+    p.add_argument("--aug-hflip", type=float, default=0.5, help="Horizontal flip probability")
+    p.add_argument("--aug-scale", type=float, default=0.0, help="Scale jitter +/- fraction (0 = off)")
+    p.add_argument("--aug-translate", type=float, default=0.0, help="Translation fraction (0 = off)")
+    p.add_argument("--aug-rotate", type=float, default=0.0, help="Rotation degrees +/- (0 = off)")
     return p.parse_args()
 
 
@@ -89,8 +100,28 @@ def main_cli():
 
     root = Path(args.dataset_root)
 
-    train_ds = CocoAppleDataset(root, args.train_ann, args.train_images)
-    val_ds = CocoAppleDataset(root, args.val_ann, args.val_images)
+    if args.no_aug:
+        train_tfms = build_transforms(train=False)
+        print("Augmentation: disabled")
+    else:
+        aug_cfg = AugConfig(
+            brightness=args.aug_brightness,
+            contrast=args.aug_contrast,
+            saturation=args.aug_saturation,
+            hue=args.aug_hue,
+            hflip=args.aug_hflip,
+            scale=args.aug_scale,
+            translate=args.aug_translate,
+            rotate=args.aug_rotate,
+        )
+        train_tfms = build_transforms(train=True, cfg=aug_cfg)
+        print(f"Augmentation (train only): {aug_cfg.summary()}")
+
+    # Val stays un-augmented (eval transform: PIL -> float tensor only).
+    val_tfms = build_transforms(train=False)
+
+    train_ds = CocoAppleDataset(root, args.train_ann, args.train_images, transforms=train_tfms)
+    val_ds = CocoAppleDataset(root, args.val_ann, args.val_images, transforms=val_tfms)
 
     train_loader = DataLoader(
         train_ds,

@@ -124,28 +124,42 @@ class CocoAppleDataset(CocoDetection if isinstance(CocoDetection, type) else Dat
             iscrowd.append(int(ann.get("iscrowd", 0)))
 
         if len(boxes) == 0:
-            # In case an image has no valid annotations, create empty tensors
-            target = {
-                "boxes": torch.zeros((0, 4), dtype=torch.float32),
-                "labels": torch.zeros((0,), dtype=torch.int64),
-                "image_id": torch.tensor([idx]),
-                "area": torch.zeros((0,), dtype=torch.float32),
-                "iscrowd": torch.zeros((0,), dtype=torch.int64),
-            }
+            boxes_t = torch.zeros((0, 4), dtype=torch.float32)
+            labels_t = torch.zeros((0,), dtype=torch.int64)
         else:
-            target = {
-                "boxes": torch.as_tensor(boxes, dtype=torch.float32),
-                "labels": torch.as_tensor(labels, dtype=torch.int64),
-                "image_id": torch.tensor([idx]),
-                "area": torch.as_tensor(areas, dtype=torch.float32),
-                "iscrowd": torch.as_tensor(iscrowd, dtype=torch.int64),
-            }
+            boxes_t = torch.as_tensor(boxes, dtype=torch.float32)
+            labels_t = torch.as_tensor(labels, dtype=torch.int64)
 
-        if self._transforms:
-            img = self._transforms(img)
+        if self._transforms is not None:
+            # v2 path: transform image + boxes jointly (geometric augmentation
+            # moves the boxes). Boxes are wrapped as a tv_tensor so v2 knows to
+            # transform them; area/iscrowd are recomputed afterwards to stay
+            # consistent with any boxes dropped by SanitizeBoundingBoxes.
+            from torchvision import tv_tensors
+
+            bbx = tv_tensors.BoundingBoxes(
+                boxes_t, format="XYXY", canvas_size=(img_h, img_w)
+            )
+            img, out = self._transforms(img, {"boxes": bbx, "labels": labels_t})
+            boxes_out = torch.as_tensor(out["boxes"], dtype=torch.float32)
+            labels_out = out["labels"]
+            wh = boxes_out[:, 2:] - boxes_out[:, :2] if boxes_out.numel() else boxes_out.new_zeros((0, 2))
+            target = {
+                "boxes": boxes_out,
+                "labels": labels_out,
+                "image_id": torch.tensor([idx]),
+                "area": (wh[:, 0] * wh[:, 1]) if boxes_out.numel() else torch.zeros((0,), dtype=torch.float32),
+                "iscrowd": torch.zeros((labels_out.shape[0],), dtype=torch.int64),
+            }
         else:
-            # default: convert to tensor inside model; keep PIL here
-            pass
+            # default: keep PIL image; tensor conversion happens in the train loop
+            target = {
+                "boxes": boxes_t,
+                "labels": labels_t,
+                "image_id": torch.tensor([idx]),
+                "area": torch.as_tensor(areas, dtype=torch.float32) if boxes else torch.zeros((0,), dtype=torch.float32),
+                "iscrowd": torch.as_tensor(iscrowd, dtype=torch.int64) if boxes else torch.zeros((0,), dtype=torch.int64),
+            }
 
         return img, target
 
