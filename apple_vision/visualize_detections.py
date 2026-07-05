@@ -95,7 +95,7 @@ def main_cli() -> None:
     p.add_argument("--dataset-root", type=str, required=True)
     p.add_argument("--out-dir", type=str, default="quickplots/detections")
     p.add_argument("--n", type=int, default=4, help="Number of samples to visualize")
-    p.add_argument("--split", type=str, default="val", choices=["train", "val"])
+    p.add_argument("--split", type=str, default="val", choices=["train", "val", "test"])
     p.add_argument("--score-threshold", type=float, default=0.5)
     args = p.parse_args()
 
