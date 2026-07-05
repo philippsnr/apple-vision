@@ -10,6 +10,7 @@ from torchvision import transforms as T
 from tqdm import tqdm
 
 from .data.minneapple import CocoAppleDataset, collate_fn
+from .data.repeat import RepeatDataset
 from .data.transforms import AugConfig, build_transforms
 from .models.detector import create_model
 from .plot_metrics import plot_loss_curve, save_metrics_csv
@@ -31,6 +32,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--early-stop-patience", type=int, default=0, help="Early stopping patience in epochs (0 disables)")
     # --- Augmentation (train split only; keeps val/benchmark un-augmented) ---
     p.add_argument("--no-aug", action="store_true", help="Disable training augmentation entirely")
+    p.add_argument("--aug-factor", type=int, default=1,
+                   help="Oversampling factor: each image appears N times per epoch, "
+                        "each freshly augmented (e.g. 4 = 4 augmented copies per image). Needs augmentation.")
     p.add_argument("--aug-brightness", type=float, default=0.3)
     p.add_argument("--aug-contrast", type=float, default=0.3)
     p.add_argument("--aug-saturation", type=float, default=0.2)
@@ -122,6 +126,13 @@ def main_cli():
 
     train_ds = CocoAppleDataset(root, args.train_ann, args.train_images, transforms=train_tfms)
     val_ds = CocoAppleDataset(root, args.val_ann, args.val_images, transforms=val_tfms)
+
+    if args.aug_factor > 1:
+        if args.no_aug:
+            print("Warning: --aug-factor > 1 with --no-aug repeats identical images (no effect from augmentation).")
+        base_n = len(train_ds)
+        train_ds = RepeatDataset(train_ds, args.aug_factor)
+        print(f"Augmentation factor: {args.aug_factor}x  ({base_n} -> {len(train_ds)} samples per epoch)")
 
     train_loader = DataLoader(
         train_ds,
