@@ -102,6 +102,114 @@ Output: `data/apple_mots/coco/`
 
 ---
 
+### Synthetic apples (Supervisely polygons)
+
+Rendered orchard scenes with polygon labels exported from Supervisely (native
+`img/` + `ann/*.json` format). Convert the polygons to COCO bounding boxes:
+
+```bash
+uv run python scripts/prepare_synthetic.py --root data/synthetic/raw --seed 42
+```
+
+Only class `apple` is kept; boxes are clamped to the image bounds; images with no
+objects are kept as negatives. Everything goes to the `train` split by default —
+synthetic data is training-only and must never enter the shared evaluation set.
+
+Output: `data/synthetic/coco/`
+
+---
+
+### Shared evaluation set (benchmark)
+
+A single frozen set used to compare **all** trained models on equal footing. It is
+carved from the annotated pool of the real datasets only (MinneApple, Apple MOTS,
+Orchard) — real, un-augmented, with ground truth — balanced by images (equal count
+per dataset), and drawn deterministically per dataset:
+
+```bash
+uv run python scripts/build_benchmark_set.py \
+  data/minneapple/coco data/apple_mots/coco data/orchard/coco \
+  --per-dataset 50 --seed 42
+```
+
+Writes `data/benchmark/coco/` (split `test`) and `data/benchmark/benchmark_manifest.json`
+with a SHA-256 per image. The manifest is the source of truth for the training
+leakage guard below. **Build it once and never rebuild it between experiments** —
+otherwise the comparison axis changes.
+
+---
+
+### Building a training set (configurable, leakage-free)
+
+Compose a training set from any sources with a per-source image count
+(`ROOT:N` or `ROOT:all`). Every benchmark image is excluded via the manifest and
+a hard assertion, so no evaluation image can leak into training:
+
+```bash
+uv run python scripts/build_training_set.py \
+  --source data/minneapple/coco:400 \
+  --source data/apple_mots/coco:all \
+  --source data/orchard/coco:800 \
+  --source data/synthetic/coco:500 \
+  --benchmark-manifest data/benchmark/benchmark_manifest.json \
+  --output data/train_v1/coco --val-ratio 0.1 --val-exclude synthetic --seed 42
+```
+
+Selection is nested (shuffle then prefix): a larger count is a superset of a
+smaller one, so increasing a source isolates the effect of *adding* data.
+`--val-exclude synthetic` keeps the internal val split real-only for a clean
+early-stopping signal. `--verify-hashes` adds a SHA-256 cross-check. Each run
+writes a `training_manifest.json` for full reproducibility.
+
+Output: `data/train_v1/coco/`
+
+**Synthetic-ratio ablation:** hold the real base fixed and sweep the synthetic
+count to plot accuracy vs. synthetic proportion:
+
+```bash
+REAL="--source data/minneapple/coco:all --source data/apple_mots/coco:all --source data/orchard/coco:all"
+for N in 0 100 200 400 800 1129; do
+  uv run python scripts/build_training_set.py $REAL \
+    --source data/synthetic/coco:$N \
+    --benchmark-manifest data/benchmark/benchmark_manifest.json \
+    --output data/sweep_synth_$N/coco \
+    --val-ratio 0.1 --val-exclude synthetic --seed 42
+done
+```
+
+Keep the augmentation config constant across the sweep, and evaluate every model
+on the same `data/benchmark/coco`.
+
+---
+
+### Packaging for Kaggle
+
+Train on Kaggle by uploading the data **once** and composing each training set
+inside the notebook. Assemble the upload folder (hardlinks, no extra disk) and
+`dataset-metadata.json`:
+
+```bash
+uv run python scripts/package_for_kaggle.py \
+  --source data/minneapple/coco --source data/apple_mots/coco \
+  --source data/orchard/coco --source data/synthetic/coco \
+  --benchmark data/benchmark/coco \
+  --manifest data/benchmark/benchmark_manifest.json \
+  --dataset-id <username>/apple-vision-data \
+  --output data/kaggle_upload
+```
+
+```bash
+kaggle datasets create  -p data/kaggle_upload --dir-mode zip   # first upload
+kaggle datasets version -p data/kaggle_upload -m "update"       # later updates
+```
+
+In the notebook (`notebooks/apple-detection-training.ipynb`), each sweep point
+just sets `SYNTHETIC_N`; `build_training_set.py` composes the set from
+`/kaggle/input` into `/kaggle/working` (symlinks, which resolve within the
+session), then training and benchmark evaluation run. No re-upload per sweep point.
+
+---
+
 ### Merging Datasets
 
 Combine multiple COCO-format datasets into one. Image and annotation IDs are remapped to be globally unique; images are symlinked (or copied) into the output directory, prefixed with the source dataset name to avoid filename collisions.
@@ -149,6 +257,20 @@ uv run python -m apple_vision.train --dataset-root data/minneapple/coco
 | `--out-dir` | `checkpoints` | Directory for saved checkpoints |
 | `--resume` | — | Path to a checkpoint to resume from |
 | `--early-stop-patience` | `0` | Early stopping patience (0 = disabled) |
+| `--no-aug` | — | Disable training augmentation entirely |
+| `--aug-factor` | `1` | Augmented views per image per epoch (online oversampling, e.g. `4`) |
+| `--aug-brightness` | `0.3` | ColorJitter brightness |
+| `--aug-contrast` | `0.3` | ColorJitter contrast |
+| `--aug-saturation` | `0.2` | ColorJitter saturation |
+| `--aug-hue` | `0.05` | ColorJitter hue |
+| `--aug-hflip` | `0.5` | Horizontal flip probability |
+| `--aug-scale` | `0.0` | Scale jitter ± fraction (0 = off) |
+| `--aug-translate` | `0.0` | Translation fraction (0 = off) |
+| `--aug-rotate` | `0.0` | Rotation degrees ± (0 = off) |
+
+Augmentation is applied to the **train split only** (torchvision transforms v2,
+box-aware); validation and the shared benchmark stay un-augmented. For a clean
+synthetic-ratio ablation, keep these flags identical across all sweep runs.
 
 Checkpoints and training artifacts saved to `checkpoints/` (or `--out-dir`):
 - `fasterrcnn_resnet50_fpn_apple_best.pth` — best val-loss checkpoint
@@ -310,12 +432,18 @@ apple_vision/
     detector.py           # Faster R-CNN factory
     depth_estimator.py    # ResNet50 + U-Net decoder, SI-log loss
   data/
-    minneapple.py         # COCO dataset class
+    minneapple.py         # COCO dataset class (box-aware v2 transform hook)
+    transforms.py         # augmentation (torchvision v2): brightness/contrast/HSV/flip/geometry
+    repeat.py             # RepeatDataset: N augmented views per image (--aug-factor)
     rgbd.py               # paired RGB+depth dataset class
 scripts/
   prepare_minneapple.py          # MinneApple → COCO
   prepare_orchard_benchmark.py   # Orchard → COCO
   prepare_apple_mots.py          # Apple MOTS masks → COCO
+  prepare_synthetic.py           # synthetic Supervisely polygons → COCO
+  build_benchmark_set.py         # frozen shared evaluation set + manifest
+  build_training_set.py          # configurable, leakage-free training set
+  package_for_kaggle.py          # assemble Kaggle upload folder + metadata
   merge_coco_datasets.py         # merge multiple COCO datasets into one
   clean_coco_dataset.py          # remove corrupted images & fix annotations
 notebooks/
