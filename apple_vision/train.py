@@ -43,10 +43,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--aug-scale", type=float, default=0.0, help="Scale jitter +/- fraction (0 = off)")
     p.add_argument("--aug-translate", type=float, default=0.0, help="Translation fraction (0 = off)")
     p.add_argument("--aug-rotate", type=float, default=0.0, help="Rotation degrees +/- (0 = off)")
+    p.add_argument("--amp", action="store_true",
+                   help="Enable automatic mixed precision (fp16) — faster + less VRAM on GPUs with tensor cores (e.g. T4). No effect on CPU.")
     return p.parse_args()
 
 
-def train_one_epoch(model, optimizer, data_loader, device, epoch, num_epochs):
+def train_one_epoch(model, optimizer, data_loader, device, epoch, num_epochs, scaler=None, use_amp=False):
     model.train()
     total_loss = 0.0
     bar = tqdm(data_loader, desc=f"Epoch {epoch}/{num_epochs} [train]", leave=False, unit="batch")
@@ -54,12 +56,18 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, num_epochs):
         images = [T.ToTensor()(img).to(device) if not isinstance(img, torch.Tensor) else img.to(device) for img in images]
         targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
 
-        loss_dict = model(images, targets)
-        losses = sum(loss for loss in loss_dict.values())
+        with torch.autocast(device_type="cuda", enabled=use_amp):
+            loss_dict = model(images, targets)
+            losses = sum(loss for loss in loss_dict.values())
 
         optimizer.zero_grad()
-        losses.backward()
-        optimizer.step()
+        if scaler is not None and use_amp:
+            scaler.scale(losses).backward()
+            scaler.step(optimizer)
+            scaler.update()
+        else:
+            losses.backward()
+            optimizer.step()
 
         total_loss += losses.item()
         bar.set_postfix(loss=f"{losses.item():.4f}")
@@ -67,7 +75,7 @@ def train_one_epoch(model, optimizer, data_loader, device, epoch, num_epochs):
     return total_loss / max(1, len(data_loader))
 
 
-def evaluate(model, data_loader, device, epoch, num_epochs):
+def evaluate(model, data_loader, device, epoch, num_epochs, use_amp=False):
     """Compute average validation loss without updating model parameters.
 
     Note: torchvision detection models return losses only when model.training is True.
@@ -86,8 +94,9 @@ def evaluate(model, data_loader, device, epoch, num_epochs):
         for images, targets in bar:
             images = [T.ToTensor()(img).to(device) if not isinstance(img, torch.Tensor) else img.to(device) for img in images]
             targets = [{k: v.to(device) if torch.is_tensor(v) else v for k, v in t.items()} for t in targets]
-            loss_dict = model(images, targets)
-            losses = sum(loss for loss in loss_dict.values())
+            with torch.autocast(device_type="cuda", enabled=use_amp):
+                loss_dict = model(images, targets)
+                losses = sum(loss for loss in loss_dict.values())
             total_loss += losses.item()
             bar.set_postfix(loss=f"{losses.item():.4f}")
 
@@ -175,6 +184,11 @@ def main_cli():
     params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.SGD(params, lr=args.lr, momentum=0.9, weight_decay=0.0005)
 
+    # Mixed precision (only meaningful on CUDA; a no-op passthrough otherwise).
+    use_amp = bool(args.amp and device.type == "cuda")
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
+    print(f"AMP (mixed precision): {'on' if use_amp else 'off'}")
+
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     best_ckpt_path = out_dir / "fasterrcnn_resnet50_fpn_apple_best.pth"
@@ -184,8 +198,8 @@ def main_cli():
     history = []
 
     for epoch in range(1, args.epochs + 1):
-        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs)
-        val_loss = evaluate(model, val_loader, device, epoch, args.epochs)
+        train_loss = train_one_epoch(model, optimizer, train_loader, device, epoch, args.epochs, scaler, use_amp)
+        val_loss = evaluate(model, val_loader, device, epoch, args.epochs, use_amp)
 
         marker = " *" if val_loss < best_val else ""
         print(f"Epoch {epoch:>3}/{args.epochs}  train={train_loss:.4f}  val={val_loss:.4f}{marker}")
