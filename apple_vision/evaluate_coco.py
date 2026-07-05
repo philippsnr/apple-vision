@@ -21,9 +21,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--val-images", type=str, default="images/val")
     p.add_argument("--checkpoint", type=str, required=True, help="Path to model checkpoint (.pth)")
     p.add_argument("--results-json", type=str, default="coco_results.json", help="Where to save detections JSON")
+    p.add_argument("--metrics-json", type=str, default=None, help="Where to save the named COCO metrics (AP/AP50/... ) as JSON")
     p.add_argument("--score-threshold", type=float, default=0.0, help="Score threshold for keeping detections (default keep all)")
     p.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     return p.parse_args()
+
+
+# COCOeval.stats order for iouType='bbox' (see pycocotools).
+_COCO_METRIC_NAMES = [
+    "AP", "AP50", "AP75", "AP_small", "AP_medium", "AP_large",
+    "AR1", "AR10", "AR100", "AR_small", "AR_medium", "AR_large",
+]
+
+
+def metrics_from_stats(stats) -> Dict[str, float]:
+    """Map the 12-element COCOeval.stats array to named metrics."""
+    return {name: float(stats[i]) for i, name in enumerate(_COCO_METRIC_NAMES)}
 
 
 def _to_coco_bbox(xyxy: torch.Tensor) -> List[float]:
@@ -117,7 +130,19 @@ def main_cli():
         json.dump(detections, f)
     print(f"Saved detections to {results_path}")
 
-    evaluate_coco(ann_path, detections)
+    evaluator = evaluate_coco(ann_path, detections)
+
+    if args.metrics_json and evaluator is not None:
+        metrics = metrics_from_stats(evaluator.stats)
+        metrics["num_detections"] = len(detections)
+        metrics["num_images"] = len(ds)
+        metrics_path = Path(args.metrics_json)
+        if not metrics_path.is_absolute():
+            metrics_path = root / metrics_path
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(metrics_path, "w", encoding="utf-8") as f:
+            json.dump(metrics, f, indent=2)
+        print(f"Saved metrics to {metrics_path}  (AP={metrics['AP']:.4f}  AP50={metrics['AP50']:.4f})")
 
 
 if __name__ == "__main__":
