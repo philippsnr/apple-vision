@@ -205,6 +205,13 @@ def main():
     )
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--symlink", action="store_true", help="Bilder symlinken statt kopieren")
+    ap.add_argument(
+        "--require-tag",
+        type=str,
+        default=None,
+        help="Nur Bilder übernehmen, deren Supervisely-Annotation diesen image-level "
+        "Tag trägt (z.B. 'done' für fertig gelabelte Bilder).",
+    )
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
@@ -220,6 +227,22 @@ def main():
         print(f"Dataset '{d.name}': {len(pairs)} Bild/Ann-Paare")
         all_pairs.extend(pairs)
     print(f"Gesamt: {len(all_pairs)} Paare aus {len(dataset_dirs)} Dataset-Ordner(n)")
+
+    # --- Optional: nur Bilder mit bestimmtem image-level Tag (z.B. 'done') ---
+    if args.require_tag:
+        def _has_tag(ann_path):
+            with open(ann_path) as f:
+                data = json.load(f)
+            return any(t.get("name") == args.require_tag for t in data.get("tags", []))
+
+        before = len(all_pairs)
+        all_pairs = [(ip, ap) for ip, ap in all_pairs if _has_tag(ap)]
+        print(f"Tag-Filter '{args.require_tag}': {len(all_pairs)}/{before} Bilder behalten")
+        if not all_pairs:
+            raise SystemExit(
+                f"Kein Bild mit Tag '{args.require_tag}' gefunden — Tag-Name prüfen "
+                f"(Groß-/Kleinschreibung) oder ob der Export image-level Tags enthält."
+            )
 
     # --- Train/Val bestimmen ---
     if args.val_ratio > 0.0:
