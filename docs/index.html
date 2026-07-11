@@ -14,7 +14,26 @@
     background: #fff;
   }
   h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-  .subtitle { color: #666; margin-top: 0; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  .subtitle { color: #666; margin-top: 0; margin-bottom: 1rem; font-size: 0.9rem; }
+  .toolbar { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1.5rem; }
+  button {
+    font: inherit;
+    padding: 0.5rem 1rem;
+    border: 1px solid #1a1a1a;
+    border-radius: 4px;
+    background: #1a1a1a;
+    color: #fff;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  button.secondary {
+    background: #fff;
+    color: #1a1a1a;
+    border-color: #ccc;
+    padding: 0.4rem 0.7rem;
+    font-size: 0.8rem;
+  }
+  #status { font-size: 0.85rem; color: #444; }
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -30,7 +49,13 @@
 </head>
 <body>
   <h1>Apple detector — training metrics</h1>
-  <p class="subtitle">Generated from Weights &amp; Biases runs. Updated via the "Update plots" GitHub Action (Actions tab → Run workflow).</p>
+  <p class="subtitle">Generated from Weights &amp; Biases runs.</p>
+
+  <div class="toolbar">
+    <button id="refresh-btn">Refresh plots</button>
+    <button id="reset-token-btn" class="secondary" title="Forget the stored GitHub token">Reset token</button>
+    <span id="status"></span>
+  </div>
 
   <div class="grid">
     <figure>
@@ -50,5 +75,70 @@
       <figcaption>AR100 vs. Number of Synthetic Images (aug_factor = 1)</figcaption>
     </figure>
   </div>
+
+  <script>
+    const REPO = "philippsnr/apple-vision";
+    const WORKFLOW_FILE = "update-plots.yml";
+    const TOKEN_KEY = "gh_pat_apple_vision";
+
+    const statusEl = document.getElementById("status");
+    const refreshBtn = document.getElementById("refresh-btn");
+    const resetBtn = document.getElementById("reset-token-btn");
+
+    function getToken() {
+      let token = localStorage.getItem(TOKEN_KEY);
+      if (!token) {
+        token = window.prompt(
+          "GitHub token with 'Actions: read and write' access to this repo " +
+          "(create one at github.com/settings/personal-access-tokens, fine-grained, " +
+          "repo: " + REPO + "). Stored only in this browser's localStorage."
+        );
+        if (token) localStorage.setItem(TOKEN_KEY, token.trim());
+      }
+      return token ? token.trim() : null;
+    }
+
+    resetBtn.addEventListener("click", () => {
+      localStorage.removeItem(TOKEN_KEY);
+      statusEl.textContent = "Token forgotten.";
+    });
+
+    refreshBtn.addEventListener("click", async () => {
+      const token = getToken();
+      if (!token) return;
+
+      refreshBtn.disabled = true;
+      statusEl.textContent = "Starting workflow…";
+
+      try {
+        const res = await fetch(
+          `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW_FILE}/dispatches`,
+          {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              Accept: "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+            },
+            body: JSON.stringify({ ref: "main" }),
+          }
+        );
+
+        if (res.status === 204) {
+          statusEl.textContent =
+            "Workflow started. Takes ~1 minute, then reload this page to see new plots.";
+        } else if (res.status === 401 || res.status === 403) {
+          localStorage.removeItem(TOKEN_KEY);
+          statusEl.textContent = `Auth failed (${res.status}). Token cleared — click Refresh to re-enter it.`;
+        } else {
+          statusEl.textContent = `Unexpected response: ${res.status}`;
+        }
+      } catch (err) {
+        statusEl.textContent = "Request failed: " + err.message;
+      } finally {
+        refreshBtn.disabled = false;
+      }
+    });
+  </script>
 </body>
 </html>
