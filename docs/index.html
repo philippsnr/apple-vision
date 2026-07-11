@@ -14,7 +14,27 @@
     background: #fff;
   }
   h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-  .subtitle { color: #666; margin-top: 0; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  .subtitle { color: #666; margin-top: 0; margin-bottom: 1.25rem; font-size: 0.9rem; }
+
+  .tabs {
+    display: inline-flex;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 1.5rem;
+  }
+  .tabs button {
+    font: inherit;
+    font-size: 0.9rem;
+    padding: 0.45rem 1rem;
+    border: none;
+    background: #fff;
+    color: #1a1a1a;
+    cursor: pointer;
+  }
+  .tabs button + button { border-left: 1px solid #ddd; }
+  .tabs button.active { background: #1a1a1a; color: #fff; }
+
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -32,23 +52,45 @@
   <h1>Apple detector — training metrics</h1>
   <p class="subtitle">Generated from Weights &amp; Biases runs. Updated via the "Update plots" GitHub Action (Actions tab → Run workflow).</p>
 
+  <div class="tabs" role="tablist">
+    <button type="button" data-variant="line" class="active">Mean ± Std</button>
+    <button type="button" data-variant="scatter">Scatter (all runs)</button>
+  </div>
+
   <div class="grid">
     <figure>
-      <img src="charts/ap_over_aug_factor.png" alt="AP vs. Augmentation Factor">
+      <img data-base="charts/ap_over_aug_factor" src="charts/ap_over_aug_factor.png" alt="AP vs. Augmentation Factor">
       <figcaption>AP vs. Augmentation Factor (synthetic_n = 0)</figcaption>
     </figure>
     <figure>
-      <img src="charts/ap_over_synthetic_n.png" alt="AP vs. Number of Synthetic Images">
+      <img data-base="charts/ap_over_synthetic_n" src="charts/ap_over_synthetic_n.png" alt="AP vs. Number of Synthetic Images">
       <figcaption>AP vs. Number of Synthetic Images (aug_factor = 1)</figcaption>
     </figure>
     <figure>
-      <img src="charts/ar100_over_aug_factor.png" alt="AR100 vs. Augmentation Factor">
+      <img data-base="charts/ar100_over_aug_factor" src="charts/ar100_over_aug_factor.png" alt="AR100 vs. Augmentation Factor">
       <figcaption>AR100 vs. Augmentation Factor (synthetic_n = 0)</figcaption>
     </figure>
     <figure>
-      <img src="charts/ar100_over_synthetic_n.png" alt="AR100 vs. Number of Synthetic Images">
+      <img data-base="charts/ar100_over_synthetic_n" src="charts/ar100_over_synthetic_n.png" alt="AR100 vs. Number of Synthetic Images">
       <figcaption>AR100 vs. Number of Synthetic Images (aug_factor = 1)</figcaption>
     </figure>
   </div>
+
+  <script>
+    const tabs = document.querySelectorAll(".tabs button");
+    const images = document.querySelectorAll("img[data-base]");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        tabs.forEach((t) => t.classList.toggle("active", t === tab));
+        const variant = tab.dataset.variant;
+        images.forEach((img) => {
+          img.src = variant === "line"
+            ? `${img.dataset.base}.png`
+            : `${img.dataset.base}_${variant}.png`;
+        });
+      });
+    });
+  </script>
 </body>
 </html>
