@@ -73,7 +73,13 @@ def fetch_runs_df(project: str, entity: str | None) -> pd.DataFrame:
         row.update(run.config)
         row.update(run.summary._json_dict)
         rows.append(row)
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+
+    if "AP" in df.columns and "AR100" in df.columns:
+        denom = df["AP"] + df["AR100"]
+        df["F1"] = (2 * df["AP"] * df["AR100"] / denom).where(denom > 0)
+
+    return df
 
 
 def main() -> None:

@@ -202,9 +202,24 @@
       </div>
       <figcaption>AR100 vs. Number of Synthetic Images (aug_factor = 1)</figcaption>
     </figure>
+    <figure>
+      <div class="img-wrap">
+        <img data-base="charts/f1_over_aug_factor" src="charts/f1_over_aug_factor.png" alt="F-Score vs. Augmentation Factor">
+      </div>
+      <figcaption>F-Score vs. Augmentation Factor (synthetic_n = 0)</figcaption>
+    </figure>
+    <figure>
+      <div class="img-wrap">
+        <img data-base="charts/f1_over_synthetic_n" src="charts/f1_over_synthetic_n.png" alt="F-Score vs. Number of Synthetic Images">
+      </div>
+      <figcaption>F-Score vs. Number of Synthetic Images (aug_factor = 1)</figcaption>
+    </figure>
   </div>
 
-  <footer>apple-vision · synthetic-data ablation dashboard</footer>
+  <footer>
+    F-Score = 2·AP·AR100 / (AP+AR100) — a harmonic-mean heuristic, not a strict F1
+    (AP and AR100 aren't measured at the same operating point). apple-vision · synthetic-data ablation dashboard
+  </footer>
 
   <script>
     const tabs = document.querySelectorAll(".tabs button");

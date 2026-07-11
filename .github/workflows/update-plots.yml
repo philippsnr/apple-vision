@@ -55,6 +55,22 @@ jobs:
             --title "AR100 vs. Number of Synthetic Images (all runs)" --x-label "Synthetic Images (n)" --y-label "AR100" \
             --out docs/charts/ar100_over_synthetic_n_scatter
 
+          python scripts/plot_wandb_metric.py --x-column aug_factor --y-column F1 \
+            --title "F-Score vs. Augmentation Factor" --x-label "Augmentation Factor" --y-label "F-Score" \
+            --out docs/charts/f1_over_aug_factor
+
+          python scripts/plot_wandb_metric.py --x-column synthetic_n --y-column F1 \
+            --title "F-Score vs. Number of Synthetic Images" --x-label "Synthetic Images (n)" --y-label "F-Score" \
+            --out docs/charts/f1_over_synthetic_n
+
+          python scripts/plot_wandb_metric.py --style scatter --x-column aug_factor --y-column F1 \
+            --title "F-Score vs. Augmentation Factor (all runs)" --x-label "Augmentation Factor" --y-label "F-Score" \
+            --out docs/charts/f1_over_aug_factor_scatter
+
+          python scripts/plot_wandb_metric.py --style scatter --x-column synthetic_n --y-column F1 \
+            --title "F-Score vs. Number of Synthetic Images (all runs)" --x-label "Synthetic Images (n)" --y-label "F-Score" \
+            --out docs/charts/f1_over_synthetic_n_scatter
+
       - name: Commit and push if changed
         run: |
           git config user.name "github-actions[bot]"
