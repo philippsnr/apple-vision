@@ -34,6 +34,7 @@ logs/
 
 # Quickplots
 quickplots/
+plots/
 
 # OS files
 .DS_Store
@@ -42,6 +43,7 @@ Thumbs.db
 # Environment files
 .env
 .env.*
+!.env.example
 
 # Python version manager
 .python-version

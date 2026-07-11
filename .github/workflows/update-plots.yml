@@ -1,0 +1,48 @@
+name: Update plots
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-plots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install matplotlib pandas wandb python-dotenv
+
+      - name: Generate plots
+        env:
+          WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+        run: |
+          python scripts/plot_wandb_metric.py --x-column aug_factor --y-column AP \
+            --title "AP vs. Augmentation Factor" --x-label "Augmentation Factor" --y-label "AP" \
+            --out docs/charts/ap_over_aug_factor
+
+          python scripts/plot_wandb_metric.py --x-column synthetic_n --y-column AP \
+            --title "AP vs. Number of Synthetic Images" --x-label "Synthetic Images (n)" --y-label "AP" \
+            --out docs/charts/ap_over_synthetic_n
+
+          python scripts/plot_wandb_metric.py --x-column aug_factor --y-column AR100 \
+            --title "AR100 vs. Augmentation Factor" --x-label "Augmentation Factor" --y-label "AR100" \
+            --out docs/charts/ar100_over_aug_factor
+
+          python scripts/plot_wandb_metric.py --x-column synthetic_n --y-column AR100 \
+            --title "AR100 vs. Number of Synthetic Images" --x-label "Synthetic Images (n)" --y-label "AR100" \
+            --out docs/charts/ar100_over_synthetic_n
+
+      - name: Commit and push if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add docs/charts/*.png
+          git diff --staged --quiet || git commit -m "Update plots from W&B"
+          git push
