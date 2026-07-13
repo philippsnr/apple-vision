@@ -32,9 +32,13 @@ htmlcov/
 checkpoints/
 logs/
 
+# wandb artifact download cache (scripts/fetch_best_checkpoint.py)
+/artifacts/
+
 # Quickplots
 quickplots/
 plots/
+exports/
 
 # OS files
 .DS_Store

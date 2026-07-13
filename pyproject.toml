@@ -23,4 +23,6 @@ dependencies = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.29.0",
     "python-multipart>=0.0.9",
+    "wandb>=0.28.0",
+    "python-dotenv>=1.0.0",
 ]

@@ -11,6 +11,7 @@ from PIL import Image
 from pydantic import BaseModel
 from torchvision import transforms as T
 
+from apple_vision import camera
 from apple_vision.models.detector import create_model
 
 CHECKPOINT_DIR = Path(__file__).parent.parent / "checkpoints"
@@ -20,11 +21,10 @@ app = FastAPI(title="Apple Vision API", description="Detect apples in RGB-D imag
 
 
 class Apple(BaseModel):
-    bbox: tuple[float, float, float, float]
-    center: tuple[float, float]
-    score: float
-    distance_m: Optional[float]
-    diameter_m: Optional[float]
+    x: float
+    y: float
+    z: float
+    width: float
 
 
 class DetectResponse(BaseModel):
@@ -86,16 +86,14 @@ def list_models():
     return {"models": checkpoints, "default": _default_checkpoint()}
 
 
-@app.post("/detect", response_model=DetectResponse, summary="Detect apples and return their positions")
+@app.post("/detect", response_model=DetectResponse, summary="Detect apples and return their 3D positions")
 async def detect(
     rgb: UploadFile = File(..., description="RGB image (JPEG or PNG)"),
     depth: UploadFile = File(..., description="Depth image aligned with RGB (16-bit PNG; values in depth_scale units)"),
-    model: Optional[str] = Form(None, description="Checkpoint filename from /models; omit to use default"),
     score_threshold: float = Form(0.5, description="Minimum detection confidence [0, 1]"),
     depth_scale: float = Form(0.001, description="Multiplier to convert depth pixel values to metres (default: 0.001 for millimetres)"),
-    focal_length_px: Optional[float] = Form(None, description="Camera focal length in pixels (fx). Required for diameter estimation."),
 ):
-    checkpoint = model or _default_checkpoint()
+    checkpoint = _default_checkpoint()
     if checkpoint is None:
         raise HTTPException(status_code=503, detail="No detector checkpoints found in checkpoints/")
 
@@ -106,6 +104,8 @@ async def detect(
 
     depth_bytes = await depth.read()
     depth_arr = np.array(Image.open(io.BytesIO(depth_bytes)))
+
+    intrinsics = camera.scaled_to(camera.REALSENSE_D435I_COLOR, rgb_img.width, rgb_img.height)
 
     img_tensor = T.ToTensor()(rgb_img).to(_device)
     with torch.no_grad():
@@ -119,17 +119,17 @@ async def detect(
         if float(score) < score_threshold:
             continue
         x1, y1, x2, y2 = box.tolist()
-        distance = _median_depth(depth_arr, box.tolist(), depth_scale)
-        if distance is not None and focal_length_px is not None:
-            diameter = (x2 - x1) * distance / focal_length_px
-        else:
-            diameter = None
+        z = _median_depth(depth_arr, box.tolist(), depth_scale)
+        if z is None:
+            continue
+        u, v = (x1 + x2) / 2, (y1 + y2) / 2
+        x, y, z = camera.backproject(u, v, z, intrinsics)
+        width = camera.width_from_bbox(x2 - x1, z, intrinsics)
         apples.append({
-            "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
-            "center": [round((x1 + x2) / 2, 1), round((y1 + y2) / 2, 1)],
-            "score": round(float(score), 4),
-            "distance_m": round(distance, 3) if distance is not None else None,
-            "diameter_m": round(diameter, 3) if diameter is not None else None,
+            "x": round(x, 3),
+            "y": round(y, 3),
+            "z": round(z, 3),
+            "width": round(width, 3),
         })
 
     return {"model": checkpoint, "count": len(apples), "apples": apples}
